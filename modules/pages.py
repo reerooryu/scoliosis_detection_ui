@@ -209,17 +209,22 @@ class InferencePage(QWizardPage):
         self.setSubTitle("Deep learning segmentation model results overlayed on the image.")
         
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(10)
         
         # Splitter to hold Canvas (left) and Metrics panel (right)
         self.splitter = QSplitter(Qt.Horizontal, self)
+        self.splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(self.splitter)
 
         # Left: Canvas area
-        canvas_container = QFrame(self)
+        canvas_container = QFrame(self.splitter)
+        canvas_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         canvas_layout = QVBoxLayout(canvas_container)
         canvas_layout.setContentsMargins(0, 0, 0, 0)
         
-        self.canvas = ScoliosisInteractiveCanvas(self)
+        self.canvas = ScoliosisInteractiveCanvas(canvas_container)
+        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         canvas_layout.addWidget(self.canvas)
         
         # Simple zoom toolbar
@@ -240,15 +245,17 @@ class InferencePage(QWizardPage):
         self.splitter.addWidget(canvas_container)
 
         # Right: Info & Initial Results Summary panel
-        info_panel = QFrame(self)
+        info_panel = QFrame(self.splitter)
+        info_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         info_layout = QVBoxLayout(info_panel)
         
-        info_lbl = QLabel("Initial AI Analysis", self)
+        info_lbl = QLabel("Initial AI Analysis", info_panel)
         info_lbl.setFont(QFont("Segoe UI", 12, QFont.Bold))
         info_layout.addWidget(info_lbl)
 
-        self.summary_txt = QTextEdit(self)
+        self.summary_txt = QTextEdit(info_panel)
         self.summary_txt.setReadOnly(True)
+        self.summary_txt.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.summary_txt.setFont(QFont("Consolas", 10))
         info_layout.addWidget(self.summary_txt)
         
@@ -262,10 +269,13 @@ class InferencePage(QWizardPage):
         # Retrieve image path from shared state
         image_path = self.wizard().image_path
         pixmap = QPixmap(image_path)
-        self.canvas.load_image(pixmap)
         
-        # Initialize or reload model engine
+        # Reset and scale model engine coordinates to match active loaded image resolution
         model_engine = self.wizard().model_engine
+        model_engine.load_data()  # Reset to raw coordinates
+        model_engine.scale_coordinates(pixmap.width(), pixmap.height())
+        
+        self.canvas.load_image(pixmap)
         
         # Render non-interactive features (view-only)
         self.canvas.set_interactive(False)
@@ -286,17 +296,22 @@ class AdjustmentPage(QWizardPage):
         self.setSubTitle("Click and drag any vertebra center or corner point to manually refine coordinates.")
         
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(10)
         
         # Splitter to hold Interactive Canvas (left) and live coordinates/angles (right)
         self.splitter = QSplitter(Qt.Horizontal, self)
+        self.splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(self.splitter)
 
         # Left: Interactive Canvas
-        canvas_container = QFrame(self)
+        canvas_container = QFrame(self.splitter)
+        canvas_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         canvas_layout = QVBoxLayout(canvas_container)
         canvas_layout.setContentsMargins(0, 0, 0, 0)
         
-        self.canvas = ScoliosisInteractiveCanvas(self)
+        self.canvas = ScoliosisInteractiveCanvas(canvas_container)
+        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         # Connect dragging signals to trigger real-time updates
         self.canvas.signals.keypoint_moved.connect(self.on_keypoint_dragged)
         canvas_layout.addWidget(self.canvas)
@@ -319,15 +334,17 @@ class AdjustmentPage(QWizardPage):
         self.splitter.addWidget(canvas_container)
 
         # Right: Dynamic Clinical metrics panels
-        info_panel = QFrame(self)
+        info_panel = QFrame(self.splitter)
+        info_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         info_layout = QVBoxLayout(info_panel)
         
-        lbl = QLabel("Live Cobb Angle Metrics", self)
+        lbl = QLabel("Live Cobb Angle Metrics", info_panel)
         lbl.setFont(QFont("Segoe UI", 12, QFont.Bold))
         info_layout.addWidget(lbl)
 
-        self.live_metrics_txt = QTextEdit(self)
+        self.live_metrics_txt = QTextEdit(info_panel)
         self.live_metrics_txt.setReadOnly(True)
+        self.live_metrics_txt.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.live_metrics_txt.setFont(QFont("Consolas", 10))
         info_layout.addWidget(self.live_metrics_txt)
         

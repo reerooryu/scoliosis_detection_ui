@@ -22,6 +22,41 @@ class ScoliosisModelEngine:
         # Ensure data consistency upon initial load
         self.recalculate_all_metrics()
 
+    def scale_coordinates(self, target_width, target_height):
+        """
+        Scales coordinates (bounding boxes and keypoints) to match the target image resolution.
+        """
+        input_shape = self.get_input_shape() # [height, width]
+        orig_height, orig_width = input_shape[0], input_shape[1]
+        
+        if orig_width == target_width and orig_height == target_height:
+            return  # No scaling needed
+            
+        scale_x = target_width / orig_width
+        scale_y = target_height / orig_height
+        
+        # Scale each detection's box and keypoints
+        for det in self.get_detections():
+            if "box" in det and det["box"]:
+                box = det["box"]
+                det["box"] = [
+                    box[0] * scale_x,
+                    box[1] * scale_y,
+                    box[2] * scale_x,
+                    box[3] * scale_y
+                ]
+                
+            if "keypoints" in det:
+                for kp in det["keypoints"]:
+                    kp[0] = kp[0] * scale_x
+                    kp[1] = kp[1] * scale_y
+                    
+        # Update input_shape to the new target dimensions
+        self.data["input_shape"] = [target_height, target_width]
+        
+        # Recalculate metrics based on new coordinates
+        self.recalculate_all_metrics()
+
     def get_detections(self):
         """Returns the list of vertebra detections."""
         return self.data.get("detections", [])

@@ -146,6 +146,8 @@ class ScoliosisInteractiveCanvas(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
+        self.setFrameStyle(QGraphicsView.NoFrame)
+        self.setStyleSheet("background: transparent; border: none; padding: 0; margin: 0;")
         
         # Layer items
         self.image_item = None
