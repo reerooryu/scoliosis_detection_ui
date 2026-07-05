@@ -4,8 +4,8 @@ import os
 
 # Application Window Configuration
 APP_NAME = "Scoliosis Detection & Measurement UI"
-WINDOW_WIDTH = 1200
-WINDOW_HEIGHT = 850
+WINDOW_WIDTH = 950
+WINDOW_HEIGHT = 950
 
 # Data paths
 DEFAULT_TEST_JSON_PATH = os.path.join("test_json", "test_output.json")
