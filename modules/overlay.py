@@ -9,7 +9,7 @@
 
 import math
 
-from PySide6.QtCore import QPointF, Signal, QObject, Qt
+from PySide6.QtCore import QPointF, QPoint, Signal, QObject, Qt
 from PySide6.QtGui import QPen, QBrush, QColor, QPolygonF
 from PySide6.QtWidgets import (
     QGraphicsEllipseItem, QGraphicsPolygonItem, QGraphicsLineItem,
@@ -307,9 +307,19 @@ class OverlayLayer:
             for _ in range(expected_texts):
                 txt = QGraphicsTextItem()
                 txt.setZValue(4)
+                # Keeps the label a constant, readable size on screen
+                # regardless of canvas zoom -- same fix as the landmark
+                # handles. Without this, a label's HTML font-size is in
+                # scene units like everything else, so on a large image
+                # that fits the view at a small scale, the label shrinks
+                # right along with it (reported as "abnormally small").
+                txt.setFlag(QGraphicsTextItem.ItemIgnoresTransformations, True)
                 scene.addItem(txt)
                 self.cobb_texts.append(txt)
 
+        # (mid_y, local_min_x, local_max_x, txt_item) per curve, resolved to
+        # final screen positions after this loop by _place_labels_without_overlap.
+        pending_labels = []
         for idx, pair in enumerate(angle_pairs):
             u_idx = pair.get("upper_detection_index")
             l_idx = pair.get("lower_detection_index")
@@ -330,7 +340,22 @@ class OverlayLayer:
             p2_l = QPointF(l_kps[KP_BOTTOM_RIGHT][0], l_kps[KP_BOTTOM_RIGHT][1])
             self._set_extended_line(self.cobb_lines[idx * 2 + 1], p1_l, p2_l)
 
-            mid_x = (p1_u.x() + p1_l.x()) / 2.0 - 150
+            # The vertebrae spanned by *this* curve (not the whole spine --
+            # a lower/upper curve in a real S-shaped scoliosis case can
+            # bulge in opposite directions) define how far out the label
+            # needs to sit to clear the anatomy at that height.
+            lo, hi = sorted((u_idx, l_idx))
+            local_xs = [
+                kp[0]
+                for det in detections[lo:hi + 1]
+                for kp in det["keypoints"]
+            ]
+            if local_xs:
+                local_min_x, local_max_x = min(local_xs), max(local_xs)
+            else:
+                mid_x = (p1_u.x() + p1_l.x()) / 2.0
+                local_min_x = local_max_x = mid_x
+
             mid_y = (p1_u.y() + p1_l.y()) / 2.0
             txt_item = self.cobb_texts[idx]
             txt_item.setHtml(
@@ -340,7 +365,65 @@ class OverlayLayer:
                 f"<span style='color:#333; font-size:13px; font-weight:bold;'>Angle: {cobb_val:.2f}°</span>"
                 "</div>"
             )
-            txt_item.setPos(mid_x, mid_y)
+            pending_labels.append((mid_y, local_min_x, local_max_x, txt_item))
+
+        self._place_labels_without_overlap(pending_labels)
+
+    def _place_labels_without_overlap(self, pending_labels, min_gap_px=10, hug_gap_px=16, edge_margin_px=6):
+        """Places each Cobb-angle label right next to its own curve, hugging
+        whichever side (left or right of that curve's vertebrae) has more
+        clear space in the viewport -- instead of either (a) a fixed scene-
+        unit offset from the spine, which only cleared the ribcage on the
+        narrow bundled demo image and landed right on top of the anatomy on
+        a wider clinical X-ray, or (b) a global left-margin anchor, which
+        keeps labels clear of anatomy but detaches them from the curve
+        they're describing.
+
+        For each curve, `local_min_x`/`local_max_x` are the scene-space
+        horizontal extent of just the vertebrae spanned by that curve (not
+        the whole spine -- an S-shaped curve's upper and lower segments can
+        bulge in opposite directions). Whichever side of that extent has
+        more room out to the viewport edge gets the label, hugging the
+        vertebra edge by a small fixed screen-pixel gap so it reads as
+        "attached to this curve" rather than floating. Labels are then
+        nudged down (per side) if they'd collide with the previous label
+        placed on that same side, and finally clamped to stay fully inside
+        the viewport as a fallback for extreme cases (e.g. a curve that
+        fills almost the entire image width).
+        """
+        view = self.canvas
+        viewport_w = view.viewport().width()
+        last_bottom = {"left": None, "right": None}
+
+        for mid_y, local_min_x, local_max_x, txt_item in pending_labels:
+            left_edge_screen = view.mapFromScene(QPointF(local_min_x, mid_y)).x()
+            right_edge_screen = view.mapFromScene(QPointF(local_max_x, mid_y)).x()
+            rect = txt_item.boundingRect()
+            label_w = rect.width()
+            label_h = rect.height()
+
+            left_space = left_edge_screen
+            right_space = viewport_w - right_edge_screen
+
+            if right_space >= left_space:
+                side = "right"
+                x = right_edge_screen + hug_gap_px
+            else:
+                side = "left"
+                x = left_edge_screen - hug_gap_px - label_w
+
+            # Fallback: if neither side actually had room (a curve spanning
+            # almost the full image width), keep the label on-screen rather
+            # than letting it run off the viewport edge.
+            x = max(edge_margin_px, min(x, viewport_w - label_w - edge_margin_px))
+
+            y = view.mapFromScene(QPointF(0.0, mid_y)).y()
+            if last_bottom[side] is not None and y < last_bottom[side] + min_gap_px:
+                y = last_bottom[side] + min_gap_px
+            last_bottom[side] = y + label_h
+
+            screen_pt = QPoint(int(x), int(y))
+            txt_item.setPos(view.mapToScene(screen_pt))
 
     def _set_extended_line(self, line_item, p1, p2):
         start_p, end_p = extended_line_points(p1, p2, extend_len=250)
