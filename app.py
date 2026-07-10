@@ -9,16 +9,18 @@ if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
 from PySide6.QtWidgets import QApplication
-from modules.wizard import ScoliosisWizard
+from modules.main_window import MainWindow
 
 def main():
     # Initialize the desktop application context (Qt6 handles High-DPI scaling automatically)
     app = QApplication(sys.argv)
-    
-    # Instantiate and display the step-by-step clinical workflow wizard
-    wizard = ScoliosisWizard()
-    wizard.show()
-    
+
+    # Instantiate and display the single-page clinical workspace. The clinical
+    # theme is applied internally by MainWindow to just its toolbar/workspace
+    # content -- the menu bar and all dialogs stay native OS style.
+    window = MainWindow()
+    window.show()
+
     # Run the desktop application main execution loop
     sys.exit(app.exec())
 
