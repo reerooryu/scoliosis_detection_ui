@@ -21,6 +21,7 @@ sdist/
 var/
 wheels/
 share/python-wheels/
+detectron2_source/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -216,3 +217,28 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# Confidential / in-house only -- not for a shared or public repo
+# ---------------------------------------------------------------------------
+
+# Trained model weights (server.py's WEIGHTS_PATH points here). These are
+# proprietary and large (500MB+ each) -- never commit them. Covers every
+# checkpoint variant under model/, not just the one currently referenced by
+# server.py.
+model/
+.model/
+
+# Reference notebook showing how the model's API was originally exercised --
+# in-house only, not part of the shipped app.
+test_api_visualization.ipynb
+
+# Original internal build spec/prompt used to bootstrap this app -- an
+# in-house planning document, not application code or documentation meant
+# for a shared repo.
+blueprint.md
+
+# Vendored detectron2 checkout used to run the inference server locally.
+# (Already ignored above, next to share/python-wheels/, as part of the
+# packaging-artifacts section -- listed here too as a pointer, since it
+# belongs in this "in-house / not for the repo" category as well.)

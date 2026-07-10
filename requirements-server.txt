@@ -1,0 +1,29 @@
+# Dependencies for server.py (the AI inference backend), kept separate from
+# requirements.txt (the PySide6 desktop client) since these two run on very
+# different machines in practice: the client is a lightweight per-user
+# desktop install, while this is a GPU-oriented model-serving box.
+#
+# NOTE on detectron2: it is not a normal PyPI package you can pin a version
+# for here -- the prebuilt wheel you need depends on your exact torch/CUDA/OS
+# combination. Install it separately, matching your torch build, e.g.:
+#   pip install torch==<version> --index-url https://download.pytorch.org/whl/<cuda-tag>
+#   pip install 'git+https://github.com/facebookresearch/detectron2.git'
+# (or the prebuilt wheel URL Facebook Research publishes for your torch/CUDA
+# combo). Get torch installed and confirm cfg.MODEL.DEVICE picks up your GPU
+# before attempting the detectron2 install.
+
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+python-multipart>=0.0.6   # required by FastAPI's UploadFile/File(...) form parsing
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+timm>=0.9.0
+# torch: install separately, matching your CUDA version (see note above)
+# detectron2: install separately, matching your torch build (see note above)
+
+# Also requires the model weights file at:
+#   model/model_t001_6_effb5_mask_kp_2cls/model_final_run.pth
+# which is not included in this repo (not committed -- likely too large for
+# git, and no Git LFS / release asset is currently wired up). server.py will
+# fail at startup (load_predictor() runs before uvicorn binds the port) until
+# this file is placed there.
