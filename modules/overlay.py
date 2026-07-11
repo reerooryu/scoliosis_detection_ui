@@ -9,6 +9,8 @@
 
 import math
 
+import shiboken6
+
 from PySide6.QtCore import QPointF, QPoint, Signal, QObject, Qt
 from PySide6.QtGui import QPen, QBrush, QColor, QPolygonF
 from PySide6.QtWidgets import (
@@ -189,19 +191,31 @@ class OverlayLayer:
         self.interactive_mode = False
 
     def clear(self):
+        """Remove tracked overlay items without touching deleted C++ wrappers.
+
+        ``QGraphicsScene.clear()`` deletes scene-owned QGraphicsItems.  The
+        corresponding Python wrappers can briefly remain in our lists, so
+        calling a Qt method on one would raise ``RuntimeError: Internal C++
+        object already deleted``.  Test the wrapper before interacting with
+        it; clearing our Python references is still required in either case.
+        """
         scene = self.canvas.scene()
         for item in self.outline_items + self.handle_items + self.cobb_lines + self.cobb_texts:
-            scene.removeItem(item)
-        if self.corridor_item is not None:
-            scene.removeItem(self.corridor_item)
-        if self.csvl_item is not None:
-            scene.removeItem(self.csvl_item)
+            self._remove_item_if_valid(scene, item)
+        self._remove_item_if_valid(scene, self.corridor_item)
+        self._remove_item_if_valid(scene, self.csvl_item)
         self.corridor_item = None
         self.outline_items = []
         self.handle_items = []
         self.cobb_lines = []
         self.cobb_texts = []
         self.csvl_item = None
+
+    @staticmethod
+    def _remove_item_if_valid(scene, item):
+        """Detach ``item`` only while its underlying C++ instance exists."""
+        if item is not None and shiboken6.isValid(item) and item.scene() is scene:
+            scene.removeItem(item)
 
     def set_interactive(self, enabled):
         """Toggles landmark handle visibility (View mode vs Edit mode)."""
@@ -292,9 +306,9 @@ class OverlayLayer:
 
         if len(self.cobb_lines) != expected_lines or len(self.cobb_texts) != expected_texts:
             for item in self.cobb_lines:
-                scene.removeItem(item)
+                self._remove_item_if_valid(scene, item)
             for item in self.cobb_texts:
-                scene.removeItem(item)
+                self._remove_item_if_valid(scene, item)
 
             self.cobb_lines = []
             for _ in range(expected_lines):

@@ -314,8 +314,11 @@ class MainWindow(QMainWindow):
     def _on_submit(self, image_path):
         self.image_path = image_path
         pixmap = QPixmap(image_path)
-        self.workspace_page.canvas.load_image(pixmap)
+        # Overlay items are owned by the graphics scene.  Clear our tracked
+        # references before ImageCanvas.load_image() calls scene.clear(),
+        # which deletes the underlying C++ QGraphicsItems.
         self.overlay_layer.clear()
+        self.workspace_page.canvas.load_image(pixmap)
         self.workspace_page.reset_metrics()
         self.stack.setCurrentWidget(self.workspace_page)
 
