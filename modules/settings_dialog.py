@@ -11,6 +11,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QPushButton,
     QLineEdit, QFileDialog, QColorDialog, QDialogButtonBox
+    # QComboBox,  # only needed for the language switch below -- re-add on import if re-enabling
 )
 
 from config import INFERENCE_API_URL
@@ -18,6 +19,18 @@ from config import INFERENCE_API_URL
 ORG_NAME = "ScoliosisSuite"
 APP_KEY = "DetectionUI"
 DEFAULT_LINE_COLOR = "#ff5722"
+
+# --- Language switch: disabled until Thai translations actually exist ------
+# Commented out wholesale rather than left as a disabled dropdown, at the
+# user's request, since Thai isn't implemented yet. To re-enable once real
+# translations (Qt Linguist .ts/.qm or a string table) are wired up:
+#   1. Uncomment this block and the QComboBox import above.
+#   2. Uncomment the "Language:" form row in __init__.
+#   3. Uncomment the language line in _on_save.
+#   4. Uncomment get_saved_language() below.
+# LANGUAGES = ["English", "Thai"]
+# DEFAULT_LANGUAGE = "English"
+# ---------------------------------------------------------------------------
 
 
 class SettingsDialog(QDialog):
@@ -56,6 +69,13 @@ class SettingsDialog(QDialog):
         folder_row.addWidget(folder_btn)
         form.addRow("Default export folder:", folder_row)
 
+        # self._language_combo = QComboBox()
+        # self._language_combo.addItems(LANGUAGES)
+        # saved_language = self._settings.value("language", DEFAULT_LANGUAGE)
+        # idx = self._language_combo.findText(saved_language)
+        # self._language_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        # form.addRow("Language:", self._language_combo)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
@@ -86,6 +106,7 @@ class SettingsDialog(QDialog):
         self._settings.setValue("inference_api_url", self._api_url_edit.text().strip())
         self._settings.setValue("line_color", self._line_color.name())
         self._settings.setValue("export_folder", self._export_folder)
+        # self._settings.setValue("language", self._language_combo.currentText())
         self.accept()
 
     @staticmethod
@@ -98,3 +119,10 @@ class SettingsDialog(QDialog):
     def get_saved_export_folder():
         settings = QSettings(ORG_NAME, APP_KEY)
         return settings.value("export_folder", os.path.expanduser("~"))
+
+    # @staticmethod
+    # def get_saved_language():
+    #     """Reads the persisted UI language without constructing the dialog
+    #     UI. Defaults to English (the only implemented option so far)."""
+    #     settings = QSettings(ORG_NAME, APP_KEY)
+    #     return settings.value("language", DEFAULT_LANGUAGE)
