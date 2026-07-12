@@ -4,7 +4,9 @@ import copy
 import json
 import os
 from config import DEFAULT_TEST_JSON_PATH, KP_TOP_LEFT, KP_TOP_RIGHT, KP_BOTTOM_LEFT, KP_BOTTOM_RIGHT
-from modules.geometry import compute_csvl_x, compute_apex, oblique_angle
+from modules.geometry import (
+    cobb_angle_between_obliques, compute_csvl_x, compute_apex, oblique_angle,
+)
 
 # How many completed drag edits to keep in the undo history. Each entry is a
 # deep copy of the full detections payload, so this is capped to keep memory
@@ -267,7 +269,7 @@ class ScoliosisModelEngine:
                 l_oblique = l_det["lower_oblique"]
 
                 # Calculate Cobb angle
-                cobb = abs(u_oblique - l_oblique)
+                cobb = cobb_angle_between_obliques(u_oblique, l_oblique)
                 pair["upper_oblique"] = u_oblique
                 pair["lower_oblique"] = l_oblique
                 pair["cobb_angle"] = cobb

@@ -60,6 +60,17 @@ def oblique_angle(p1, p2):
     return 0.0
 
 
+def cobb_angle_between_obliques(first_oblique, second_oblique):
+    """Return the acute Cobb angle between two endplate orientations.
+
+    Endplates are lines rather than directed vectors, so orientations that
+    differ by 180 degrees describe the same line.  Normalize that periodic
+    difference before choosing the smaller of the two intersecting angles.
+    """
+    difference = abs(float(second_oblique) - float(first_oblique)) % 180.0
+    return min(difference, 180.0 - difference)
+
+
 # ---------------------------------------------------------------------------
 # CSVL (Central Sacral Vertical Line) and apex vertebra
 # ---------------------------------------------------------------------------
