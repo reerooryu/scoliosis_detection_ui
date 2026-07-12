@@ -17,6 +17,8 @@ from detectron2.modeling.backbone.fpn import FPN, LastLevelMaxPool
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
+from modules.geometry import cobb_angle_between_obliques
+
 app = FastAPI(title="Cobb Angle Inference API")
 ROOT_DIR = Path(__file__).resolve().parent
 WEIGHTS_PATH = ROOT_DIR / "model" / "model_t001_6_effb5_mask_kp_2cls" / "model_final_run.pth"
@@ -413,7 +415,7 @@ def compute_cobb_results(
         lower_idx = masker_point_upper[idx + 1]
         upper_angle = degree_upper[upper_idx]
         lower_angle = degree_lower[lower_idx]
-        cobb_angle_value = float(min(abs(lower_angle - upper_angle), 180.0 - abs(lower_angle - upper_angle)))
+        cobb_angle_value = cobb_angle_between_obliques(upper_angle, lower_angle)
         cobb_angles.append(cobb_angle_value)
         angle_pairs.append(
             {
