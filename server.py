@@ -1,5 +1,6 @@
 import io
 import math
+from threading import Lock
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -24,6 +25,12 @@ ROOT_DIR = Path(__file__).resolve().parent
 WEIGHTS_PATH = ROOT_DIR / "model" / "model_t001_6_effb5_mask_kp_2cls" / "model_final_run.pth"
 
 predictor = None
+# FastAPI executes synchronous endpoints in its worker threadpool.  Keep
+# model construction and predictor use serialized: Detectron2 predictor
+# initialization is expensive and concurrent GPU calls on one shared model
+# can cause duplicate allocations or unsafe execution.
+_predictor_lock = Lock()
+_inference_lock = Lock()
 
 
 @BACKBONE_REGISTRY.register()
@@ -75,31 +82,38 @@ def load_predictor():
     if predictor is not None:
         return predictor
 
-    cfg = get_cfg()
-    cfg.merge_from_file(model_zoo.get_config_file("COCO-Keypoints/keypoint_rcnn_R_50_FPN_3x.yaml"))
-    cfg.MODEL.WEIGHTS = str(WEIGHTS_PATH)
-    cfg.MODEL.DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    cfg.DATASETS.TEST = ("vbs_test",)
-    cfg.INPUT.FORMAT = "RGB"
-    cfg.INPUT.MASK_FORMAT = "bitmask"
-    cfg.MODEL.PIXEL_MEAN = [123.675, 116.28, 103.53]
-    cfg.MODEL.PIXEL_STD = [58.395, 57.12, 57.375]
-    cfg.INPUT.MIN_SIZE_TEST = 768
-    cfg.INPUT.MAX_SIZE_TEST = 1536
-    cfg.MODEL.MASK_ON = True
-    cfg.MODEL.KEYPOINT_ON = True
-    cfg.MODEL.BACKBONE.NAME = "build_efficientnet_b5_fpn"
-    cfg.MODEL.FPN.OUT_CHANNELS = 256
-    cfg.MODEL.ROI_HEADS.NUM_CLASSES = 2
-    cfg.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS = 5
-    cfg.MODEL.ROI_MASK_HEAD.CONV_DIM = 512
-    cfg.MODEL.ROI_MASK_HEAD.NUM_CONVS = 16
-    cfg.MODEL.ROI_MASK_HEAD.POOLER_RESOLUTION = 28
-    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.05
-    cfg.MODEL.ROI_HEADS.NMS_THRESH_TEST = 0.45
-    cfg.TEST.DETECTIONS_PER_IMAGE = 300
+    with _predictor_lock:
+        # A second request can reach this point while the first is loading the
+        # weights. Recheck while holding the lock to avoid allocating the
+        # model (and its GPU memory) twice.
+        if predictor is not None:
+            return predictor
 
-    predictor = DefaultPredictor(cfg)
+        cfg = get_cfg()
+        cfg.merge_from_file(model_zoo.get_config_file("COCO-Keypoints/keypoint_rcnn_R_50_FPN_3x.yaml"))
+        cfg.MODEL.WEIGHTS = str(WEIGHTS_PATH)
+        cfg.MODEL.DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+        cfg.DATASETS.TEST = ("vbs_test",)
+        cfg.INPUT.FORMAT = "RGB"
+        cfg.INPUT.MASK_FORMAT = "bitmask"
+        cfg.MODEL.PIXEL_MEAN = [123.675, 116.28, 103.53]
+        cfg.MODEL.PIXEL_STD = [58.395, 57.12, 57.375]
+        cfg.INPUT.MIN_SIZE_TEST = 768
+        cfg.INPUT.MAX_SIZE_TEST = 1536
+        cfg.MODEL.MASK_ON = True
+        cfg.MODEL.KEYPOINT_ON = True
+        cfg.MODEL.BACKBONE.NAME = "build_efficientnet_b5_fpn"
+        cfg.MODEL.FPN.OUT_CHANNELS = 256
+        cfg.MODEL.ROI_HEADS.NUM_CLASSES = 2
+        cfg.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS = 5
+        cfg.MODEL.ROI_MASK_HEAD.CONV_DIM = 512
+        cfg.MODEL.ROI_MASK_HEAD.NUM_CONVS = 16
+        cfg.MODEL.ROI_MASK_HEAD.POOLER_RESOLUTION = 28
+        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.05
+        cfg.MODEL.ROI_HEADS.NMS_THRESH_TEST = 0.45
+        cfg.TEST.DETECTIONS_PER_IMAGE = 300
+
+        predictor = DefaultPredictor(cfg)
     return predictor
 
 
@@ -439,7 +453,11 @@ def run_inference(image_bytes: bytes) -> Dict[str, object]:
     image = read_image_bytes(image_bytes)
     image_model = prepare_image_for_model(image)
     predictor = load_predictor()
-    outputs = predictor(image_model)
+    # One shared predictor is intentionally serialized. Requests can still
+    # wait here in FastAPI's threadpool without blocking the async event loop
+    # or /health.
+    with _inference_lock:
+        outputs = predictor(image_model)
     instances = outputs["instances"].to("cpu")
 
     boxes = instances.pred_boxes.tensor.numpy() if instances.has("pred_boxes") else np.zeros((0, 4), dtype=float)
@@ -461,11 +479,11 @@ def run_inference(image_bytes: bytes) -> Dict[str, object]:
 
 
 @app.post("/predict")
-async def predict_api(file: UploadFile = File(...)):
+def predict_api(file: UploadFile = File(...)):
     if file.content_type.split("/")[0] != "image":
         raise HTTPException(status_code=400, detail="File must be an image")
 
-    image_bytes = await file.read()
+    image_bytes = file.file.read()
     try:
         result = run_inference(image_bytes)
     except Exception as exc:
