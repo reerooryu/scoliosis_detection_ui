@@ -8,10 +8,11 @@
 # and drawing it is OverlayLayer's job (modules/overlay.py).
 
 import os
+import threading
 import time
 
 import requests
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QObject, Signal, Slot
 
 from config import INFERENCE_API_URL, INFERENCE_TIMEOUT
 
@@ -68,24 +69,53 @@ def run_inference(image_path, api_url=INFERENCE_API_URL, timeout=INFERENCE_TIMEO
     return data, elapsed
 
 
-class InferenceWorker(QThread):
-    """Runs run_inference() off the UI thread so the app stays responsive
-    while the model call is in flight (network + model inference time is
-    not guaranteed to be instant)."""
+class InferenceWorker(QObject):
+    """Performs one blocking inference request in a dedicated QThread.
 
-    succeeded = Signal(dict, float)  # (result_dict, elapsed_seconds)
-    failed = Signal(str)             # human-readable error message
+    This class deliberately owns no QThread.  The UI creates the thread,
+    moves this worker into it, and tears both objects down through their Qt
+    lifecycle signals.  ``requests`` cannot abort an in-flight upload/read;
+    cancellation therefore suppresses delivery of an obsolete result as soon
+    as the request returns.
+    """
 
-    def __init__(self, image_path, api_url=INFERENCE_API_URL, timeout=INFERENCE_TIMEOUT, parent=None):
-        super().__init__(parent)
+    succeeded = Signal(int, dict, float)  # (request_id, result, elapsed_seconds)
+    failed = Signal(int, str)             # (request_id, human-readable message)
+    finished = Signal(int)                # always emitted exactly once
+
+    def __init__(self, request_id, image_path, api_url=INFERENCE_API_URL, timeout=INFERENCE_TIMEOUT):
+        super().__init__()
+        self.request_id = request_id
         self.image_path = image_path
         self.api_url = api_url
         self.timeout = timeout
+        self._cancelled = threading.Event()
 
+    def cancel(self):
+        """Thread-safe invalidation for a superseded request.
+
+        The active requests call remains bounded by its configured timeout;
+        its result is discarded rather than allowed to update the UI.
+        """
+        self._cancelled.set()
+
+    @Slot()
     def run(self):
+        if self._cancelled.is_set():
+            self.finished.emit(self.request_id)
+            return
         try:
             data, elapsed = run_inference(self.image_path, self.api_url, self.timeout)
         except BackendUnavailableError as exc:
-            self.failed.emit(str(exc))
-            return
-        self.succeeded.emit(data, elapsed)
+            if not self._cancelled.is_set():
+                self.failed.emit(self.request_id, str(exc))
+        except Exception as exc:
+            # Keep unexpected worker errors from silently terminating a
+            # background thread without restoring the UI's retry state.
+            if not self._cancelled.is_set():
+                self.failed.emit(self.request_id, f"Unexpected inference error: {exc}")
+        else:
+            if not self._cancelled.is_set():
+                self.succeeded.emit(self.request_id, data, elapsed)
+        finally:
+            self.finished.emit(self.request_id)

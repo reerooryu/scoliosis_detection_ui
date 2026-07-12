@@ -19,7 +19,7 @@
 
 import os
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread
 from PySide6.QtGui import QPixmap, QAction, QKeySequence
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QFrame,
@@ -145,7 +145,11 @@ class MainWindow(QMainWindow):
 
         self.image_path = None
         self.model_engine = None
-        self._inference_worker = None
+        self._next_request_id = 0
+        self._active_request_id = None
+        # Request ID -> (QThread, InferenceWorker).  Keeping both references
+        # until QThread.finished prevents premature Python/C++ destruction.
+        self._inference_jobs = {}
         self._dirty = False  # True once landmarks have been dragged since the last export
 
         self._build_menu_and_toolbar()
@@ -312,6 +316,7 @@ class MainWindow(QMainWindow):
         self.load_page.drop_zone._on_browse()
 
     def _on_submit(self, image_path):
+        self._cancel_inference_jobs()
         self.image_path = image_path
         pixmap = QPixmap(image_path)
         # Overlay items are owned by the graphics scene.  Clear our tracked
@@ -335,19 +340,37 @@ class MainWindow(QMainWindow):
     def _run_inference(self, image_path):
         api_url = SettingsDialog.get_saved_api_url()
         self.retry_action.setEnabled(False)
-        worker = InferenceWorker(image_path, api_url=api_url, timeout=INFERENCE_TIMEOUT, parent=self)
+        self._next_request_id += 1
+        request_id = self._next_request_id
+        self._active_request_id = request_id
+
+        thread = QThread(self)
+        thread.setProperty("request_id", request_id)
+        worker = InferenceWorker(
+            request_id, image_path, api_url=api_url, timeout=INFERENCE_TIMEOUT
+        )
+        worker.moveToThread(thread)
+
+        thread.started.connect(worker.run)
         worker.succeeded.connect(self._on_inference_succeeded)
         worker.failed.connect(self._on_inference_failed)
-        self._inference_worker = worker
-        worker.start()
+        # The worker emits finished after either outcome.  The standard Qt
+        # lifecycle chain then stops and deletes both C++ objects safely.
+        worker.finished.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_inference_thread_finished)
+
+        self._inference_jobs[request_id] = (thread, worker)
+        thread.start()
 
     def _on_retry_analysis(self):
         if self.image_path:
             self.statusBar().showMessage("Retrying AI analysis…")
             self._run_inference(self.image_path)
 
-    def _on_inference_succeeded(self, data, elapsed):
-        if self.sender() is not self._inference_worker:
+    def _on_inference_succeeded(self, request_id, data, elapsed):
+        if request_id != self._active_request_id:
             return  # stale result from a superseded request (e.g. after Reset)
 
         pixmap = QPixmap(self.image_path)
@@ -375,8 +398,8 @@ class MainWindow(QMainWindow):
         count = len(self.model_engine.get_detections())
         self.statusBar().showMessage(f"Analysis complete — {count} vertebrae detected.")
 
-    def _on_inference_failed(self, message):
-        if self.sender() is not self._inference_worker:
+    def _on_inference_failed(self, request_id, message):
+        if request_id != self._active_request_id:
             return
 
         self.retry_action.setEnabled(True)
@@ -386,6 +409,23 @@ class MainWindow(QMainWindow):
             f"{message}\n\nYou can still view and zoom the image. "
             "Use View → Retry AI Analysis once the backend is reachable."
         )
+
+    def _on_inference_thread_finished(self):
+        """Release the Python references once Qt has stopped the thread."""
+        thread = self.sender()
+        request_id = thread.property("request_id") if thread is not None else None
+        self._inference_jobs.pop(request_id, None)
+
+    def _cancel_inference_jobs(self):
+        """Invalidate every outstanding request without destroying threads.
+
+        ``requests`` has no safe cross-thread abort API, so a running HTTP
+        call is allowed to reach its configured timeout.  Its worker then
+        exits normally and the lifecycle connections above clean it up.
+        """
+        self._active_request_id = None
+        for _thread, worker in self._inference_jobs.values():
+            worker.cancel()
 
     # ------------------------------------------------------------------
     # Edit mode / landmark dragging / undo-redo
@@ -505,7 +545,7 @@ class MainWindow(QMainWindow):
 
         self.image_path = None
         self.model_engine = None
-        self._inference_worker = None
+        self._cancel_inference_jobs()
         self._dirty = False
         self.overlay_layer.clear()
         self.load_page.reset()
@@ -556,6 +596,15 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Guards against closing the window with unexported landmark
         adjustments still pending."""
+        if self._inference_jobs:
+            QMessageBox.information(
+                self,
+                "Analysis Still Running",
+                "Please wait for the active AI analysis request to finish before closing. "
+                "The application will remain responsive while it completes.",
+            )
+            event.ignore()
+            return
         if self._confirm_discard_if_dirty("closing"):
             event.accept()
         else:
