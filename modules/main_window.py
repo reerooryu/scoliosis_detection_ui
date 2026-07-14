@@ -168,7 +168,10 @@ class MainWindow(QMainWindow):
         # widgets -- the menu bar and every dialog stay native OS style.
         theme.apply_clinical_theme(self.toolbar, self.stack, self.statusBar())
 
-        self.overlay_layer = OverlayLayer(self.workspace_page.canvas)
+        self.overlay_layer = OverlayLayer(
+            self.workspace_page.canvas,
+            cobb_line_color=SettingsDialog.get_saved_line_color(),
+        )
         self.overlay_layer.signals.keypoint_moved.connect(self._on_keypoint_dragged)
         self.overlay_layer.signals.drag_started.connect(self._on_drag_started)
         self.overlay_layer.signals.drag_finished.connect(self._on_drag_finished)
@@ -567,7 +570,8 @@ class MainWindow(QMainWindow):
 
     def _on_open_settings(self):
         dialog = SettingsDialog(self)
-        dialog.exec()
+        if dialog.exec() == QDialog.Accepted:
+            self.overlay_layer.set_cobb_line_color(SettingsDialog.get_saved_line_color())
 
     def _on_export_clicked(self):
         if self.model_engine is None:

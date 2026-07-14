@@ -116,6 +116,13 @@ class SettingsDialog(QDialog):
         return settings.value("inference_api_url", INFERENCE_API_URL)
 
     @staticmethod
+    def get_saved_line_color():
+        """Returns the persisted Cobb measurement-line color as a valid hex value."""
+        settings = QSettings(ORG_NAME, APP_KEY)
+        color = QColor(settings.value("line_color", DEFAULT_LINE_COLOR))
+        return color.name() if color.isValid() else DEFAULT_LINE_COLOR
+
+    @staticmethod
     def get_saved_export_folder():
         settings = QSettings(ORG_NAME, APP_KEY)
         return settings.value("export_folder", os.path.expanduser("~"))

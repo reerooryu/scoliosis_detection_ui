@@ -142,9 +142,17 @@ class SpinalCorridorItem(QGraphicsPolygonItem):
 class CobbMeasurementLineItem(QGraphicsLineItem):
     """Measurement line for a Cobb angle, drawn along a vertebra endplate."""
 
-    def __init__(self, parent_item=None):
+    def __init__(self, color=COLOR_COBB_LINE, parent_item=None):
         super().__init__(parent_item)
-        self.setPen(QPen(QColor(*COLOR_COBB_LINE), 2))
+        self.set_color(color)
+
+    def set_color(self, color):
+        """Update only the pen color, preserving the measurement line width."""
+        qcolor = QColor(*color) if isinstance(color, tuple) else QColor(color)
+        pen = self.pen()
+        pen.setColor(qcolor)
+        pen.setWidth(2)
+        self.setPen(pen)
 
 
 class CSVLLineItem(QGraphicsLineItem):
@@ -179,9 +187,10 @@ class OverlayLayer:
     "given these detections, draw/update these scene items."
     """
 
-    def __init__(self, canvas):
+    def __init__(self, canvas, cobb_line_color=COLOR_COBB_LINE):
         self.canvas = canvas
         self.signals = OverlaySignals()
+        self.cobb_line_color = cobb_line_color
         self.corridor_item = None
         self.outline_items = []
         self.handle_items = []
@@ -222,6 +231,13 @@ class OverlayLayer:
         self.interactive_mode = enabled
         for handle in self.handle_items:
             handle.setVisible(enabled)
+
+    def set_cobb_line_color(self, color):
+        """Apply a saved measurement-line color to current and future items."""
+        self.cobb_line_color = color
+        for line in self.cobb_lines:
+            if shiboken6.isValid(line):
+                line.set_color(color)
 
     def render(self, model_engine):
         """Creates the overlay items on first call, updates positions on
@@ -312,7 +328,7 @@ class OverlayLayer:
 
             self.cobb_lines = []
             for _ in range(expected_lines):
-                line = CobbMeasurementLineItem()
+                line = CobbMeasurementLineItem(self.cobb_line_color)
                 line.setZValue(2.5)
                 scene.addItem(line)
                 self.cobb_lines.append(line)
