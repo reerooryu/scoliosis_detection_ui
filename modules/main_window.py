@@ -4,12 +4,14 @@
 # (File/Edit/View/Tools), and swaps between the Load page (image import)
 # and the Workspace page (canvas + measurement panel) via a QStackedWidget.
 #
-# On Submit, this window kicks off a live call to the AI inference backend
-# (modules/parser.py) on a background thread, then hands the result to
-# ScoliosisModelEngine (modules/model_mock.py) and OverlayLayer
-# (modules/overlay.py) to render landmarks/Cobb lines/CSVL and populate the
-# measurement panel. If the backend is unreachable, the image still shows
-# and the user can retry once it's back.
+# The actual workflow logic -- submit/retry/reset, the background inference
+# request lifecycle, and landmark-edit operations (drag/undo/redo/reset
+# edits) -- lives in modules/controller.py:AnalysisController, driving an
+# modules/session.py:AnalysisSession. This window's job is composition root,
+# navigation, and dialog factory: it builds the menu/toolbar/pages, wires
+# widget signals to controller methods, and binds session/controller signals
+# to widget updates, rather than manually refreshing every widget itself
+# after each operation. See AGENTS.md for the full rationale.
 #
 # Tools > Model Validation opens a separate, unrelated workflow
 # (modules/validation.py) for comparing a model prediction against a
@@ -19,7 +21,7 @@
 
 import os
 
-from PySide6.QtCore import Qt, QThread
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QAction, QKeySequence
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QFrame,
@@ -32,8 +34,8 @@ from modules import theme
 from modules.load_view import LoadPage
 from modules.canvas import ImageCanvas
 from modules.overlay import OverlayLayer
-from modules.model_mock import ScoliosisModelEngine
-from modules.parser import InferenceWorker
+from modules.session import AnalysisSession
+from modules.controller import AnalysisController
 from modules.settings_dialog import SettingsDialog
 from modules.export import ExportDialog
 from modules.validation import ValidationDialog
@@ -50,7 +52,7 @@ class MetricRow(QFrame):
 
         lbl = QLabel(label)
         lbl.setObjectName("MetricLabel")
-        self.value_lbl = QLabel("—")
+        self.value_lbl = QLabel("-")
         self.value_lbl.setObjectName("MetricValue")
 
         layout.addWidget(lbl)
@@ -117,7 +119,7 @@ class WorkspacePage(QWidget):
 
         panel_layout.addStretch()
 
-        self.export_btn = QPushButton("Export…")
+        self.export_btn = QPushButton("Export...")
         self.export_btn.setEnabled(False)
         self.export_btn.setToolTip("Available once AI analysis results are loaded")
         panel_layout.addWidget(self.export_btn)
@@ -134,7 +136,7 @@ class WorkspacePage(QWidget):
 
     def reset_metrics(self):
         for row in self.metrics.values():
-            row.set_value("—")
+            row.set_value("-")
 
 
 class MainWindow(QMainWindow):
@@ -142,15 +144,6 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self.setWindowTitle(APP_NAME)
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
-
-        self.image_path = None
-        self.model_engine = None
-        self._next_request_id = 0
-        self._active_request_id = None
-        # Request ID -> (QThread, InferenceWorker).  Keeping both references
-        # until QThread.finished prevents premature Python/C++ destruction.
-        self._inference_jobs = {}
-        self._dirty = False  # True once landmarks have been dragged since the last export
 
         self._build_menu_and_toolbar()
 
@@ -172,10 +165,35 @@ class MainWindow(QMainWindow):
             self.workspace_page.canvas,
             cobb_line_color=SettingsDialog.get_saved_line_color(),
         )
-        self.overlay_layer.signals.keypoint_moved.connect(self._on_keypoint_dragged)
-        self.overlay_layer.signals.drag_started.connect(self._on_drag_started)
-        self.overlay_layer.signals.drag_finished.connect(self._on_drag_finished)
 
+        # --- State (AnalysisSession) + workflow (AnalysisController) -------
+        self.session = AnalysisSession(self)
+        self.controller = AnalysisController(
+            self.session,
+            self.overlay_layer,
+            api_url_provider=SettingsDialog.get_saved_api_url,
+            timeout=INFERENCE_TIMEOUT,
+            parent=self,
+        )
+
+        # Session state -> widget bindings. The window never manually
+        # refreshes a widget mid-operation; it only reacts to these.
+        self.session.state_changed.connect(self._on_state_changed)
+        self.session.metrics_changed.connect(self._on_metrics_changed)
+        self.session.edit_state_changed.connect(self._on_edit_state_changed)
+
+        # Controller -> window bindings (status text, dialogs, the one
+        # metric -- processing time -- that isn't part of persistent state).
+        self.controller.status_message.connect(self.statusBar().showMessage)
+        self.controller.error_dialog.connect(self._on_error_dialog)
+        self.controller.analysis_completed.connect(self._on_analysis_completed)
+
+        # Overlay drag signals -> controller (landmark edit workflow).
+        self.overlay_layer.signals.keypoint_moved.connect(self.controller.on_keypoint_dragged)
+        self.overlay_layer.signals.drag_started.connect(self.controller.on_drag_started)
+        self.overlay_layer.signals.drag_finished.connect(self.controller.on_drag_finished)
+
+        # Widget actions -> controller.
         self.load_page.submitted.connect(self._on_submit)
         self.workspace_page.export_btn.clicked.connect(self._on_export_clicked)
         self.workspace_page.reset_btn.clicked.connect(self._on_reset)
@@ -185,18 +203,18 @@ class MainWindow(QMainWindow):
 
         # Settings action is shared between the File menu and the toolbar,
         # so it's built once, up front.
-        self.settings_action = QAction("&Settings…", self)
+        self.settings_action = QAction("&Settings...", self)
         self.settings_action.setShortcut(QKeySequence("Ctrl+,"))
         self.settings_action.triggered.connect(self._on_open_settings)
 
         # --- File menu ---
         file_menu = menu_bar.addMenu("&File")
-        open_action = QAction("&Open Image…", self)
+        open_action = QAction("&Open Image...", self)
         open_action.setShortcut(QKeySequence.Open)  # Ctrl+O
         open_action.triggered.connect(self._on_open_image)
         file_menu.addAction(open_action)
 
-        self.export_action = QAction("&Export Results…", self)
+        self.export_action = QAction("&Export Results...", self)
         self.export_action.setShortcut(QKeySequence.Save)  # Ctrl+S
         self.export_action.setEnabled(False)
         self.export_action.triggered.connect(self._on_export_clicked)
@@ -239,7 +257,7 @@ class MainWindow(QMainWindow):
 
         edit_menu.addSeparator()
 
-        self.reset_action = QAction("Full &Reset…", self)
+        self.reset_action = QAction("Full &Reset...", self)
         self.reset_action.setShortcut(QKeySequence("Ctrl+R"))
         self.reset_action.setToolTip("Clear the loaded image and analysis, and return to the start")
         self.reset_action.triggered.connect(self._on_reset)
@@ -275,7 +293,7 @@ class MainWindow(QMainWindow):
 
         # --- Tools menu (ML-team QA workflow, unrelated to the clinical state) ---
         tools_menu = menu_bar.addMenu("&Tools")
-        self.validation_action = QAction("&Model Validation…", self)
+        self.validation_action = QAction("&Model Validation...", self)
         self.validation_action.triggered.connect(self._on_open_validation)
         tools_menu.addAction(self.validation_action)
 
@@ -319,224 +337,107 @@ class MainWindow(QMainWindow):
         self.load_page.drop_zone._on_browse()
 
     def _on_submit(self, image_path):
-        self._cancel_inference_jobs()
-        self.image_path = image_path
+        """The controller clears the overlay and cancels any outstanding
+        request as part of submit() -- that must happen before
+        canvas.load_image() below, since ImageCanvas.load_image() calls
+        scene.clear(), which deletes the overlay's C++ items out from under
+        any still-tracked Python references."""
+        self.controller.submit(image_path)
+
         pixmap = QPixmap(image_path)
-        # Overlay items are owned by the graphics scene.  Clear our tracked
-        # references before ImageCanvas.load_image() calls scene.clear(),
-        # which deletes the underlying C++ QGraphicsItems.
-        self.overlay_layer.clear()
         self.workspace_page.canvas.load_image(pixmap)
-        self.workspace_page.reset_metrics()
         self.stack.setCurrentWidget(self.workspace_page)
 
-        for action in (self.zoom_in_action, self.zoom_out_action, self.fit_action):
-            action.setEnabled(True)
-
-        self.statusBar().showMessage(f"Loaded: {os.path.basename(image_path)} — running AI analysis…")
-        self._run_inference(image_path)
-
-    # ------------------------------------------------------------------
-    # Backend inference
-    # ------------------------------------------------------------------
-
-    def _run_inference(self, image_path):
-        api_url = SettingsDialog.get_saved_api_url()
-        self.retry_action.setEnabled(False)
-        self._next_request_id += 1
-        request_id = self._next_request_id
-        self._active_request_id = request_id
-
-        thread = QThread(self)
-        thread.setProperty("request_id", request_id)
-        worker = InferenceWorker(
-            request_id, image_path, api_url=api_url, timeout=INFERENCE_TIMEOUT
-        )
-        worker.moveToThread(thread)
-
-        thread.started.connect(worker.run)
-        worker.succeeded.connect(self._on_inference_succeeded)
-        worker.failed.connect(self._on_inference_failed)
-        # The worker emits finished after either outcome.  The standard Qt
-        # lifecycle chain then stops and deletes both C++ objects safely.
-        worker.finished.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(self._on_inference_thread_finished)
-
-        self._inference_jobs[request_id] = (thread, worker)
-        thread.start()
-
     def _on_retry_analysis(self):
-        if self.image_path:
-            self.statusBar().showMessage("Retrying AI analysis…")
-            self._run_inference(self.image_path)
-
-    def _on_inference_succeeded(self, request_id, data, elapsed):
-        if request_id != self._active_request_id:
-            return  # stale result from a superseded request (e.g. after Reset)
-
-        pixmap = QPixmap(self.image_path)
-        self.model_engine = ScoliosisModelEngine(autoload=False)
-        self.model_engine.load_from_dict(data)
-        self.model_engine.scale_coordinates(pixmap.width(), pixmap.height())
-        # Capture the AI's original result *after* scaling, so "Reset Edits"
-        # restores coordinates in the same space the canvas actually displays.
-        self.model_engine.capture_baseline()
-
-        self.overlay_layer.clear()
-        self.overlay_layer.render(self.model_engine)
-
-        self.edit_mode_action.setEnabled(True)
-        self.edit_mode_action.setToolTip("")
-        self.retry_action.setEnabled(False)
-        self.workspace_page.export_btn.setEnabled(True)
-        self.workspace_page.export_btn.setToolTip("")
-        self.export_action.setEnabled(True)
-        self._dirty = False
-        self._update_edit_action_states()
-
-        self._populate_metrics(elapsed)
-
-        count = len(self.model_engine.get_detections())
-        self.statusBar().showMessage(f"Analysis complete — {count} vertebrae detected.")
-
-    def _on_inference_failed(self, request_id, message):
-        if request_id != self._active_request_id:
-            return
-
-        self.retry_action.setEnabled(True)
-        self.statusBar().showMessage("AI analysis unavailable — showing image only.")
-        QMessageBox.warning(
-            self, "AI Analysis Unavailable",
-            f"{message}\n\nYou can still view and zoom the image. "
-            "Use View → Retry AI Analysis once the backend is reachable."
-        )
-
-    def _on_inference_thread_finished(self):
-        """Release the Python references once Qt has stopped the thread."""
-        thread = self.sender()
-        request_id = thread.property("request_id") if thread is not None else None
-        self._inference_jobs.pop(request_id, None)
-
-    def _cancel_inference_jobs(self):
-        """Invalidate every outstanding request without destroying threads.
-
-        ``requests`` has no safe cross-thread abort API, so a running HTTP
-        call is allowed to reach its configured timeout.  Its worker then
-        exits normally and the lifecycle connections above clean it up.
-        """
-        self._active_request_id = None
-        for _thread, worker in self._inference_jobs.values():
-            worker.cancel()
+        self.controller.retry()
 
     # ------------------------------------------------------------------
-    # Edit mode / landmark dragging / undo-redo
+    # Session / controller signal handlers
+    # ------------------------------------------------------------------
+
+    def _on_state_changed(self, state):
+        has_image = state != AnalysisSession.STATE_EMPTY
+        is_ready = state == AnalysisSession.STATE_READY
+        is_error = state == AnalysisSession.STATE_ERROR
+
+        for action in (self.zoom_in_action, self.zoom_out_action, self.fit_action):
+            action.setEnabled(has_image)
+
+        self.edit_mode_action.setEnabled(is_ready)
+        self.edit_mode_action.setToolTip("" if is_ready else "Available once landmarks are loaded")
+
+        self.workspace_page.export_btn.setEnabled(is_ready)
+        self.workspace_page.export_btn.setToolTip(
+            "" if is_ready else "Available once AI analysis results are loaded"
+        )
+        self.export_action.setEnabled(is_ready)
+
+        self.retry_action.setEnabled(is_error)
+
+        if state in (AnalysisSession.STATE_EMPTY, AnalysisSession.STATE_LOADING):
+            self.workspace_page.reset_metrics()
+
+        if state == AnalysisSession.STATE_EMPTY:
+            self.edit_mode_action.setChecked(False)
+            self.stack.setCurrentWidget(self.load_page)
+
+        if is_error:
+            self.statusBar().showMessage("AI analysis unavailable -- showing image only.")
+        elif state == AnalysisSession.STATE_EMPTY:
+            self.statusBar().showMessage("Load a spine X-ray image to begin.")
+
+    def _on_metrics_changed(self):
+        engine = self.session.model_engine
+        if engine is None:
+            return
+        metrics = self.workspace_page.metrics
+
+        metrics["Primary Cobb Angle"].set_value("{:.1f} deg".format(engine.get_selected_cobb_angle()))
+
+        pairs = engine.get_angle_pairs()
+        metrics["Curve 1"].set_value("{:.1f} deg".format(pairs[0]["cobb_angle"]) if len(pairs) > 0 else "-")
+        metrics["Curve 2"].set_value("{:.1f} deg".format(pairs[1]["cobb_angle"]) if len(pairs) > 1 else "-")
+
+        apex_idx, deviation_px = engine.get_apex()
+        if apex_idx is not None:
+            metrics["Apex"].set_value("Vertebra #{}".format(apex_idx))
+            metrics["CSVL Deviation"].set_value("{:.1f} px".format(deviation_px))
+        else:
+            metrics["Apex"].set_value("-")
+            metrics["CSVL Deviation"].set_value("-")
+
+        metrics["Vertebrae"].set_value(str(len(engine.get_detections())))
+
+    def _on_analysis_completed(self, elapsed):
+        self.workspace_page.metrics["Processing Time"].set_value("{:.2f}s (API round-trip)".format(elapsed))
+
+    def _on_edit_state_changed(self):
+        self.undo_action.setEnabled(self.session.can_undo())
+        self.redo_action.setEnabled(self.session.can_redo())
+        self.reset_edits_action.setEnabled(self.session.has_edits())
+
+    def _on_error_dialog(self, title, message):
+        QMessageBox.warning(self, title, message)
+
+    # ------------------------------------------------------------------
+    # Edit mode / landmark editing
     # ------------------------------------------------------------------
 
     def _on_edit_mode_toggled(self, enabled):
         self.overlay_layer.set_interactive(enabled)
 
-    def _on_drag_started(self, det_idx, kp_idx):
-        """Fired once per drag gesture (mouse press on a handle) -- this is
-        the undo checkpoint, capturing the state right before this specific
-        adjustment begins."""
-        if self.model_engine is None:
-            return
-        self.model_engine.snapshot_for_undo()
-        self._update_edit_action_states()
-
-    def _on_keypoint_dragged(self, det_idx, kp_idx, x, y):
-        """Fired continuously while a handle is being dragged (every mouse-
-        move tick). Keeps the model data and the *cheap* parts of the
-        overlay (outline polygon, Cobb lines/labels, CSVL) live-updated. See
-        modules/overlay.py's render()/​_render_cobb_overlays() for why this
-        no longer tears down and rebuilds the whole overlay on every tick --
-        that reentrant scene-mutation pattern was the cause of the
-        freeze/crash when dragging a landmark."""
-        if self.model_engine is None:
-            return
-        self.model_engine.update_keypoint(det_idx, kp_idx, x, y)
-        self.overlay_layer.render(self.model_engine)
-        self._populate_metrics(elapsed=None)
-        self._dirty = True
-
-    def _on_drag_finished(self, det_idx, kp_idx):
-        """Fired once per drag gesture (mouse release). The live updates
-        during the drag already keep everything consistent, but this is a
-        good, safe point (mouse grab has ended) to refresh button states."""
-        self._update_edit_action_states()
-
     def _on_undo(self):
-        if self.model_engine is None or not self.model_engine.undo():
-            return
-        self.overlay_layer.clear()
-        self.overlay_layer.render(self.model_engine)
-        self._populate_metrics(elapsed=None)
-        self._dirty = self.model_engine.has_edits()
-        self._update_edit_action_states()
-        self.statusBar().showMessage("Undid last landmark adjustment.")
+        self.controller.undo()
 
     def _on_redo(self):
-        if self.model_engine is None or not self.model_engine.redo():
-            return
-        self.overlay_layer.clear()
-        self.overlay_layer.render(self.model_engine)
-        self._populate_metrics(elapsed=None)
-        self._dirty = self.model_engine.has_edits()
-        self._update_edit_action_states()
-        self.statusBar().showMessage("Redid landmark adjustment.")
+        self.controller.redo()
 
     def _on_reset_edits(self):
-        if self.model_engine is None:
-            return
-        if not self.model_engine.has_edits():
+        if not self.session.has_edits():
             return
         if not self._confirm_discard_if_dirty("resetting your manual edits"):
             return
-        self.model_engine.reset_edits()
-        self.overlay_layer.clear()
-        self.overlay_layer.render(self.model_engine)
-        self._populate_metrics(elapsed=None)
-        self._dirty = False
-        self._update_edit_action_states()
-        self.statusBar().showMessage("Manual edits reset to the AI's original result.")
-
-    def _update_edit_action_states(self):
-        engine = self.model_engine
-        has_engine = engine is not None
-        self.undo_action.setEnabled(has_engine and engine.can_undo())
-        self.redo_action.setEnabled(has_engine and engine.can_redo())
-        self.reset_edits_action.setEnabled(has_engine and engine.has_edits())
-
-    # ------------------------------------------------------------------
-    # Measurement panel
-    # ------------------------------------------------------------------
-
-    def _populate_metrics(self, elapsed):
-        engine = self.model_engine
-        if engine is None:
-            return
-        metrics = self.workspace_page.metrics
-
-        metrics["Primary Cobb Angle"].set_value(f"{engine.get_selected_cobb_angle():.1f}°")
-
-        pairs = engine.get_angle_pairs()
-        metrics["Curve 1"].set_value(f"{pairs[0]['cobb_angle']:.1f}°" if len(pairs) > 0 else "—")
-        metrics["Curve 2"].set_value(f"{pairs[1]['cobb_angle']:.1f}°" if len(pairs) > 1 else "—")
-
-        apex_idx, deviation_px = engine.get_apex()
-        if apex_idx is not None:
-            metrics["Apex"].set_value(f"Vertebra #{apex_idx}")
-            metrics["CSVL Deviation"].set_value(f"{deviation_px:.1f} px")
-        else:
-            metrics["Apex"].set_value("—")
-            metrics["CSVL Deviation"].set_value("—")
-
-        metrics["Vertebrae"].set_value(str(len(engine.get_detections())))
-
-        if elapsed is not None:
-            metrics["Processing Time"].set_value(f"{elapsed:.2f}s (API round-trip)")
+        self.controller.reset_edits()
 
     # ------------------------------------------------------------------
     # Reset / Settings / Export / Validation
@@ -545,28 +446,8 @@ class MainWindow(QMainWindow):
     def _on_reset(self):
         if not self._confirm_discard_if_dirty("resetting"):
             return
-
-        self.image_path = None
-        self.model_engine = None
-        self._cancel_inference_jobs()
-        self._dirty = False
-        self.overlay_layer.clear()
+        self.controller.reset()
         self.load_page.reset()
-        self.workspace_page.reset_metrics()
-        self.workspace_page.export_btn.setEnabled(False)
-        self.workspace_page.export_btn.setToolTip("Available once AI analysis results are loaded")
-        self.export_action.setEnabled(False)
-        self.stack.setCurrentWidget(self.load_page)
-
-        self.edit_mode_action.setChecked(False)
-        self.edit_mode_action.setEnabled(False)
-        self.retry_action.setEnabled(False)
-        self._update_edit_action_states()
-
-        for action in (self.zoom_in_action, self.zoom_out_action, self.fit_action):
-            action.setEnabled(False)
-
-        self.statusBar().showMessage("Load a spine X-ray image to begin.")
 
     def _on_open_settings(self):
         dialog = SettingsDialog(self)
@@ -574,11 +455,11 @@ class MainWindow(QMainWindow):
             self.overlay_layer.set_cobb_line_color(SettingsDialog.get_saved_line_color())
 
     def _on_export_clicked(self):
-        if self.model_engine is None:
+        if self.session.model_engine is None:
             return
-        dialog = ExportDialog(self.model_engine, self)
+        dialog = ExportDialog(self.session.model_engine, self)
         if dialog.exec() == QDialog.Accepted:
-            self._dirty = False
+            self.session.dirty = False
 
     def _on_open_validation(self):
         dialog = ValidationDialog(self)
@@ -587,12 +468,12 @@ class MainWindow(QMainWindow):
     def _confirm_discard_if_dirty(self, action_description):
         """Asks before throwing away landmark adjustments that haven't been
         exported yet. Returns True if it's OK to proceed."""
-        if not self._dirty:
+        if not self.session.dirty:
             return True
         reply = QMessageBox.question(
             self, "Unsaved Adjustments",
-            f"You've adjusted landmarks since the last export.\n\n"
-            f"Continue with {action_description} and discard these changes?",
+            "You've adjusted landmarks since the last export.\n\n"
+            "Continue with {} and discard these changes?".format(action_description),
             QMessageBox.Yes | QMessageBox.No
         )
         return reply == QMessageBox.Yes
@@ -600,7 +481,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Guards against closing the window with unexported landmark
         adjustments still pending."""
-        if self._inference_jobs:
+        if self.controller.has_pending_jobs():
             QMessageBox.information(
                 self,
                 "Analysis Still Running",
