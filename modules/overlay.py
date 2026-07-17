@@ -37,7 +37,17 @@ class OverlaySignals(QObject):
 
 
 class LandmarkHandleItem(QGraphicsEllipseItem):
-    """Draggable circle handle representing a single vertebra keypoint."""
+    """Circle handle representing a single vertebra keypoint.
+
+    The 4 corner keypoints are draggable. The center keypoint (KP_CENTER) is
+    not: ScoliosisModelEngine.recalculate_all_metrics() always recomputes it
+    as the average of the 4 corner keypoints, so it is a derived value, not a
+    source of truth. It's still rendered -- as a visual reference showing
+    where that average currently sits -- but is non-interactive. (It used to
+    be draggable like any other handle; the drag appeared to work live but
+    was silently discarded on the very next recalculation, while still
+    leaving behind a spurious undo snapshot and a "dirty" flag.)
+    """
 
     def __init__(self, det_idx, kp_idx, x, y, parent_item=None, signals=None):
         super().__init__(-HANDLE_RADIUS, -HANDLE_RADIUS, HANDLE_RADIUS * 2, HANDLE_RADIUS * 2, parent_item)
@@ -45,6 +55,7 @@ class LandmarkHandleItem(QGraphicsEllipseItem):
         self.kp_idx = kp_idx
         self.signals = signals
         self.is_dragging = False
+        self.draggable = kp_idx != KP_CENTER
 
         self.setPen(QPen(QColor(0, 0, 0, 180), 1))
         if kp_idx == KP_CENTER:
@@ -52,19 +63,18 @@ class LandmarkHandleItem(QGraphicsEllipseItem):
         else:
             self.setBrush(QBrush(QColor(*COLOR_KEYPOINT_CORNER)))
 
-        self.setFlags(
-            QGraphicsEllipseItem.ItemIsMovable |
-            QGraphicsEllipseItem.ItemSendsGeometryChanges |
-            # Keeps the handle's on-screen size constant regardless of the
-            # canvas's zoom level. Without this, the ellipse's radius is in
-            # scene coordinates like everything else, so it grows right
-            # along with the image -- at a few clicks of zoom-in (exactly
-            # when you'd want Edit Mode for precision) the handles quickly
-            # became huge. HANDLE_RADIUS/ACTIVE_HANDLE_RADIUS are screen
-            # pixels now, not scene units.
-            QGraphicsEllipseItem.ItemIgnoresTransformations
-        )
-        self.setAcceptHoverEvents(True)
+        # Keeps the handle's on-screen size constant regardless of the
+        # canvas's zoom level. Without this, the ellipse's radius is in
+        # scene coordinates like everything else, so it grows right
+        # along with the image -- at a few clicks of zoom-in (exactly
+        # when you'd want Edit Mode for precision) the handles quickly
+        # became huge. HANDLE_RADIUS/ACTIVE_HANDLE_RADIUS are screen
+        # pixels now, not scene units.
+        flags = QGraphicsEllipseItem.ItemIgnoresTransformations
+        if self.draggable:
+            flags |= QGraphicsEllipseItem.ItemIsMovable | QGraphicsEllipseItem.ItemSendsGeometryChanges
+        self.setFlags(flags)
+        self.setAcceptHoverEvents(self.draggable)
         self.setPos(x, y)
 
     def hoverEnterEvent(self, event):
@@ -77,12 +87,18 @@ class LandmarkHandleItem(QGraphicsEllipseItem):
         super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
+        if not self.draggable:
+            event.ignore()
+            return
         self.is_dragging = True
         if self.signals:
             self.signals.drag_started.emit(self.det_idx, self.kp_idx)
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if not self.draggable:
+            event.ignore()
+            return
         self.is_dragging = False
         self.setRect(-HANDLE_RADIUS, -HANDLE_RADIUS, HANDLE_RADIUS * 2, HANDLE_RADIUS * 2)
         super().mouseReleaseEvent(event)
