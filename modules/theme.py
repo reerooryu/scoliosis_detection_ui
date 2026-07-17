@@ -28,7 +28,7 @@ QWidget {{
     background-color: {BG_APP};
     color: {TEXT_PRIMARY};
     font-family: 'Segoe UI', Arial;
-    font-size: 10.5pt;
+    font-size: 11.5pt;
 }}
 
 /* Labels and plain frames must not paint their own opaque background --
@@ -113,12 +113,12 @@ QPushButton#PrimaryButton:disabled {{
 
 QLabel#MetricValue {{
     color: {TEXT_PRIMARY};
-    font-size: 13pt;
+    font-size: 14pt;
     font-weight: 600;
 }}
 QLabel#MetricLabel {{
     color: {TEXT_MUTED};
-    font-size: 9pt;
+    font-size: 10pt;
 }}
 
 QSplitter::handle {{

@@ -153,7 +153,7 @@ class LoadPage(QWidget):
         layout.setSpacing(20)
 
         title = QLabel("Load Spine X-Ray")
-        title.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        title.setFont(QFont("Segoe UI", 17, QFont.Bold))
         layout.addWidget(title)
 
         subtitle = QLabel("Import a spine X-ray image to begin a Cobb angle assessment.")
