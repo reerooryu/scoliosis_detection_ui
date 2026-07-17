@@ -75,7 +75,7 @@ class ValidationDialog(QDialog):
 
         self.results_txt = QTextEdit()
         self.results_txt.setReadOnly(True)
-        self.results_txt.setFont(QFont("Consolas", 10))
+        self.results_txt.setFont(QFont("Consolas", 11))
         layout.addWidget(self.results_txt, stretch=1)
 
         close_btn = QPushButton("Close")

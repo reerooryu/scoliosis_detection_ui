@@ -407,8 +407,8 @@ class OverlayLayer:
             txt_item.setHtml(
                 "<div style='background-color: rgba(255,255,255,210); "
                 "border: 1.5px solid rgb(255,87,34); padding:4px; border-radius:4px;'>"
-                f"<b style='color: rgb(255,87,34); font-size:11px;'>Curve #{idx + 1}</b><br/>"
-                f"<span style='color:#333; font-size:13px; font-weight:bold;'>Angle: {cobb_val:.2f}°</span>"
+                f"<b style='color: rgb(255,87,34); font-size:12px;'>Curve #{idx + 1}</b><br/>"
+                f"<span style='color:#333; font-size:14px; font-weight:bold;'>Angle: {cobb_val:.2f}°</span>"
                 "</div>"
             )
             pending_labels.append((mid_y, local_min_x, local_max_x, txt_item))
