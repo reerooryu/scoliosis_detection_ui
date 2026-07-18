@@ -2,8 +2,6 @@
 
 An interactive medical-tech desktop application built in Python using PySide6 (Qt for Python). It gives clinicians a single-page clinical workspace: load a spine X-ray, send it to a real AI inference backend, view the predicted vertebra landmarks and Cobb angle measurements overlaid on the image, manually refine landmarks in Edit mode (with undo/redo), and export the finalized clinical data.
 
---
-
 ## Design Architecture
 
 The application is a **single-page clinical workspace**. Clinicians use this tool repeatedly throughout the day, so the UI favors a persistent toolbar and a workspace they can jump around in freely (view ↔ edit, undo/redo, re-export, reset) rather than a linear multi-page flow.
@@ -86,8 +84,6 @@ The server loads this file *before* it opens its port, if it's missing, `python 
 
 The previous 4-step wizard implementation (`modules/wizard.py`, `modules/pages.py`) is retained in the repo for reference but is no longer used by `app.py`.
 
---
-
 ## Keyboard Shortcuts
 
 | Action | Shortcut |
@@ -106,8 +102,6 @@ The previous 4-step wizard implementation (`modules/wizard.py`, `modules/pages.p
 | Toggle Edit Mode | `Ctrl+E` |
 | Retry AI Analysis | `F5` |
 
---
-
 ## Tech Stack & Dependencies
 
 **Desktop client** (`requirements.txt`):
@@ -120,8 +114,6 @@ The previous 4-step wizard implementation (`modules/wizard.py`, `modules/pages.p
 - **API**: FastAPI + uvicorn
 - **Model**: PyTorch + detectron2 (Mask/Keypoint R-CNN with an EfficientNet-B5 FPN backbone via `timm`) + OpenCV
 - `torch` and `detectron2` aren't plain pinned PyPI installs, they need to match your exact CUDA/OS combination; see the comments in `requirements-server.txt`.
-
---
 
 ## Environment Setup
 
@@ -148,8 +140,6 @@ pip install "git+https://github.com/facebookresearch/detectron2.git"
 ```
 
 Then place the trained weights at `model/model_t001_6_effb5_mask_kp_2cls/model_final_run.pth` (see the Confidential Data note below, this file is never committed to the repo).
-
---
 
 ## How to Run
 
@@ -183,8 +173,6 @@ pyinstaller -noconsole -onefile -add-data "test_json;test_json" app.py
 
 The compiled executable will be in `.\dist\app.exe`.
 
---
-
 ## Confidential Data
 
 The following are intentionally **excluded from version control** (see `.gitignore`) and must be provided locally:
@@ -194,8 +182,6 @@ The following are intentionally **excluded from version control** (see `.gitigno
 - `blueprint.md`, the original internal build spec used to bootstrap this app
 
 None of these are required to read or modify the application code itself; they're only needed to run the real inference backend or to consult internal background material.
-
---
 
 ## Clinical Math Specifications
 
