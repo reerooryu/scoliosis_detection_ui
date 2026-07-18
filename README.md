@@ -14,28 +14,28 @@ The menu bar (File / Edit / View / Tools) and every dialog (Settings, Export, Mo
 
 ```mermaid
 graph TD
-    App[app.py - Launcher] -> Main[modules/main_window.py - QMainWindow]
+    App["app.py - Launcher"] --> Main["modules/main_window.py - QMainWindow"]
 
-    Main -> MenuBar[Native menu bar: File / Edit / View / Tools]
-    Main -> Toolbar[Themed toolbar: zoom, Edit Mode, Undo/Redo, Reset Edits, Settings]
-    Main -> Stack[QStackedWidget]
+    Main --> MenuBar["Native menu bar: File / Edit / View / Tools"]
+    Main --> Toolbar["Themed toolbar: zoom, Edit Mode, Undo/Redo, Reset Edits, Settings"]
+    Main --> Stack["QStackedWidget"]
 
-    Stack -> Load[LoadPage - modules/load_view.py]
-    Stack -> Workspace[WorkspacePage]
+    Stack --> Load["LoadPage - modules/load_view.py"]
+    Stack --> Workspace["WorkspacePage"]
 
-    Workspace -> Canvas[modules/canvas.py - ImageCanvas]
-    Workspace -> Overlay[modules/overlay.py - Landmark/Cobb/CSVL overlays]
-    Workspace -> Panel[Measurement Panel + Export + Reset]
+    Workspace --> Canvas["modules/canvas.py - ImageCanvas"]
+    Workspace --> Overlay["modules/overlay.py - Landmark/Cobb/CSVL overlays"]
+    Workspace --> Panel["Measurement Panel + Export + Reset"]
 
-    Main -> Parser[modules/parser.py - Backend API client]
-    Parser ->|POST image| Server[server.py - FastAPI inference server]
-    Main -> Engine[modules/model_mock.py - ScoliosisModelEngine]
-    Engine -> Geometry[modules/geometry.py - Oblique/Cobb/CSVL math]
+    Main --> Parser["modules/parser.py - Backend API client"]
+    Parser -->|POST image| Server["server.py - FastAPI inference server"]
+    Main --> Engine["modules/model_mock.py - ScoliosisModelEngine"]
+    Engine --> Geometry["modules/geometry.py - Oblique/Cobb/CSVL math"]
 
-    Toolbar -> Settings[modules/settings_dialog.py]
-    Panel -> Export[modules/export.py - JSON export]
-    Main -> Validation[modules/validation.py - Model Validation QA tool]
-    Main -> Theme[modules/theme.py - Clinical stylesheet]
+    Toolbar --> Settings["modules/settings_dialog.py"]
+    Panel --> Export["modules/export.py - JSON export"]
+    Main --> Validation["modules/validation.py - Model Validation QA tool"]
+    Main --> Theme["modules/theme.py - Clinical stylesheet"]
 ```
 
 1. **Application Launcher (`app.py`)**: entry point. Constructs and shows `MainWindow`; no theming happens at the `QApplication` level (see the native-chrome note above).
