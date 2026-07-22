@@ -32,6 +32,7 @@ graph TD
 
     Toolbar --> Settings["modules/settings_dialog.py"]
     Panel --> Export["modules/export.py - JSON export"]
+    Main --> Project["modules/project.py - Save/Open .sdproj project files"]
     Main --> Validation["modules/validation.py - Model Validation QA tool"]
     Main --> Theme["modules/theme.py - Clinical stylesheet"]
 ```
@@ -48,8 +49,9 @@ graph TD
 10. **Geometry (`modules/geometry.py`)**: pure, unit-testable math, the oblique-angle formula (matched exactly to the backend's convention, see below), CSVL/apex-vertebra calculation, and the comparison functions used by the Model Validation tool.
 11. **Settings Dialog (`modules/settings_dialog.py`)**: inference API URL, default overlay line color, and default export folder, all persisted with `QSettings`.
 12. **Export (`modules/export.py`)**: Export modal, Raw JSON is fully wired up (timestamped filename, folder picker); Annotated Image, PDF Report, and CSV are shown as "coming soon" so the intended end-state UX is visible now.
-13. **Model Validation (`modules/validation.py`)**: a separate ML-team QA workflow, loads a prediction JSON and a ground-truth label JSON, and reports vertebra-count accuracy, per-vertebra oblique-angle error, Cobb curve count/accuracy, and a processing-time note.
-14. **Utilities (`modules/utils.py`)**: JSON export I/O and clinical summary text generation.
+13. **Project Save/Open (`modules/project.py`)**: a `.sdproj` file (a zip bundle: metadata, an embedded copy of the source image, current detections, and the AI's original baseline) that lets a clinician save progress on an in-progress assessment and resume it later, including manual edits, without re-running AI inference. Distinct from Export: Export produces a one-way clinical deliverable, a project is meant to be reopened and kept editing.
+14. **Model Validation (`modules/validation.py`)**: a separate ML-team QA workflow, loads a prediction JSON and a ground-truth label JSON, and reports vertebra-count accuracy, per-vertebra oblique-angle error, Cobb curve count/accuracy, and a processing-time note.
+15. **Utilities (`modules/utils.py`)**: JSON export I/O and clinical summary text generation.
 
 ### The AI backend (`server.py`)
 
@@ -77,6 +79,7 @@ The server loads this file *before* it opens its port, if it's missing, `python 
 - Measurement panel: Primary Cobb Angle, Curve 1, Curve 2, Apex, CSVL Deviation, Vertebrae, Processing Time
 - Settings modal, inference API URL, default line color, default export folder (all persisted)
 - Export modal, Raw JSON export with a timestamped filename; Annotated Image / PDF Report / CSV are present as "coming soon"
+- Save Project / Open Project (File menu), saves the source image, current (possibly edited) detections, and the AI's original baseline to a `.sdproj` file so an in-progress assessment can be resumed later without re-running AI inference
 - Model Validation tool (Tools menu), prediction-vs-label QA comparison for the ML team
 
 **Not yet built:**
@@ -89,6 +92,8 @@ The previous 4-step wizard implementation (`modules/wizard.py`, `modules/pages.p
 | Action | Shortcut |
 |--|--|
 | Open Image | `Ctrl+O` |
+| Open Project | `Ctrl+Shift+O` |
+| Save Project | `Ctrl+Shift+S` |
 | Export Results | `Ctrl+S` |
 | Settings | `Ctrl+,` |
 | Exit | `Ctrl+Q` |

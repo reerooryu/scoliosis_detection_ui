@@ -5,8 +5,9 @@
 # and the Workspace page (canvas + measurement panel) via a QStackedWidget.
 #
 # The actual workflow logic -- submit/retry/reset, the background inference
-# request lifecycle, and landmark-edit operations (drag/undo/redo/reset
-# edits) -- lives in modules/controller.py:AnalysisController, driving an
+# request lifecycle, landmark-edit operations (drag/undo/redo/reset edits),
+# and project save/open (modules/project.py) -- lives in
+# modules/controller.py:AnalysisController, driving an
 # modules/session.py:AnalysisSession. This window's job is composition root,
 # navigation, and dialog factory: it builds the menu/toolbar/pages, wires
 # widget signals to controller methods, and binds session/controller signals
@@ -21,12 +22,12 @@
 
 import os
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPixmap, QAction, QKeySequence
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QFrame,
     QLabel, QPushButton, QStackedWidget, QToolBar, QSizePolicy, QStatusBar,
-    QMessageBox, QDialog
+    QMessageBox, QDialog, QFileDialog
 )
 
 from config import APP_NAME, WINDOW_WIDTH, WINDOW_HEIGHT, INFERENCE_TIMEOUT
@@ -39,6 +40,7 @@ from modules.controller import AnalysisController
 from modules.settings_dialog import SettingsDialog
 from modules.export import ExportDialog
 from modules.validation import ValidationDialog
+from modules.project import PROJECT_EXTENSION
 
 
 class MetricRow(QFrame):
@@ -214,6 +216,31 @@ class MainWindow(QMainWindow):
         open_action.triggered.connect(self._on_open_image)
         file_menu.addAction(open_action)
 
+        self.open_project_action = QAction("Open &Project...", self)
+        self.open_project_action.setShortcut(QKeySequence("Ctrl+Shift+O"))
+        self.open_project_action.triggered.connect(self._on_open_project)
+        file_menu.addAction(self.open_project_action)
+
+        file_menu.addSeparator()
+
+        # Save Project persists progress on an in-progress assessment (image
+        # + current + baseline detections) so it can be resumed later without
+        # re-running AI inference -- distinct from Export Results below,
+        # which is a one-way clinical deliverable, not something you reopen
+        # and keep editing. See modules/project.py.
+        self.save_project_action = QAction("&Save Project", self)
+        self.save_project_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        self.save_project_action.setEnabled(False)
+        self.save_project_action.triggered.connect(self._on_save_project)
+        file_menu.addAction(self.save_project_action)
+
+        self.save_project_as_action = QAction("Save Project &As...", self)
+        self.save_project_as_action.setEnabled(False)
+        self.save_project_as_action.triggered.connect(self._on_save_project_as)
+        file_menu.addAction(self.save_project_as_action)
+
+        file_menu.addSeparator()
+
         self.export_action = QAction("&Export Results...", self)
         self.export_action.setShortcut(QKeySequence.Save)  # Ctrl+S
         self.export_action.setEnabled(False)
@@ -333,6 +360,8 @@ class MainWindow(QMainWindow):
     def _on_open_image(self):
         """File -> Open Image: shows the Load page and opens its file picker,
         so the same validation/preview/Submit flow always applies."""
+        if not self._confirm_discard_if_dirty("loading a new image"):
+            return
         self.stack.setCurrentWidget(self.load_page)
         self.load_page.drop_zone._on_browse()
 
@@ -371,6 +400,8 @@ class MainWindow(QMainWindow):
             "" if is_ready else "Available once AI analysis results are loaded"
         )
         self.export_action.setEnabled(is_ready)
+        self.save_project_action.setEnabled(is_ready)
+        self.save_project_as_action.setEnabled(is_ready)
 
         self.retry_action.setEnabled(is_error)
 
@@ -461,26 +492,76 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             self.session.dirty = False
 
+    # ------------------------------------------------------------------
+    # Project save / open (modules/project.py, modules/controller.py)
+    # ------------------------------------------------------------------
+
+    def _on_open_project(self):
+        if not self._confirm_discard_if_dirty("opening a different project"):
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open Project", "", f"Scoliosis Project Files (*{PROJECT_EXTENSION})"
+        )
+        if not path:
+            return
+        if self.controller.open_project(path):
+            self.stack.setCurrentWidget(self.workspace_page)
+            # If the workspace page has never been shown before in this run
+            # of the app, its canvas won't have a settled viewport size the
+            # instant setCurrentWidget() returns -- and ImageCanvas itself
+            # already accounts for this for the base image (see its own
+            # showEvent/_delayed_initial_fit, on a 100ms timer). The
+            # overlay's Cobb-label placement depends on that same settled
+            # viewport, so render it just after ImageCanvas's own delayed
+            # re-fit would have fired, rather than synchronously right now
+            # (see AnalysisController.open_project()'s docstring for why
+            # the Submit flow never needs this: its network round-trip
+            # already provides the delay for free).
+            QTimer.singleShot(150, self.controller.finish_open_project)
+
+    def _on_save_project(self):
+        if self.session.project_path:
+            self.controller.save_project(self.session.project_path)
+        else:
+            self._on_save_project_as()
+
+    def _on_save_project_as(self):
+        default_name = "assessment"
+        if self.session.original_filename:
+            default_name = os.path.splitext(self.session.original_filename)[0]
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Project As", default_name + PROJECT_EXTENSION,
+            f"Scoliosis Project Files (*{PROJECT_EXTENSION})"
+        )
+        if not path:
+            return
+        if not path.endswith(PROJECT_EXTENSION):
+            path += PROJECT_EXTENSION
+        self.controller.save_project(path)
+
     def _on_open_validation(self):
         dialog = ValidationDialog(self)
         dialog.exec()
 
     def _confirm_discard_if_dirty(self, action_description):
         """Asks before throwing away landmark adjustments that haven't been
-        exported yet. Returns True if it's OK to proceed."""
-        if not self.session.dirty:
+        exported or saved to a project yet. Returns True if it's OK to
+        proceed. session.dirty and session.project_dirty are independent
+        (you can export without saving a project, or save a project without
+        exporting), so either one being set means there's something to lose."""
+        if not (self.session.dirty or self.session.project_dirty):
             return True
         reply = QMessageBox.question(
-            self, "Unsaved Adjustments",
-            "You've adjusted landmarks since the last export.\n\n"
+            self, "Unsaved Changes",
+            "You've made changes that haven't been exported or saved to a project.\n\n"
             "Continue with {} and discard these changes?".format(action_description),
             QMessageBox.Yes | QMessageBox.No
         )
         return reply == QMessageBox.Yes
 
     def closeEvent(self, event):
-        """Guards against closing the window with unexported landmark
-        adjustments still pending."""
+        """Guards against closing the window with unexported and/or
+        unsaved-to-project landmark adjustments still pending."""
         if self.controller.has_pending_jobs():
             QMessageBox.information(
                 self,

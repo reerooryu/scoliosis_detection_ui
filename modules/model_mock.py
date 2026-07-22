@@ -153,6 +153,22 @@ class ScoliosisModelEngine:
     def has_baseline(self):
         return self._original_data is not None
 
+    def get_baseline_data(self):
+        """Returns the captured AI baseline dict -- e.g. for persisting to a
+        saved project (see modules/project.py) -- or None if no baseline has
+        been captured yet."""
+        return self._original_data
+
+    def restore_baseline(self, data):
+        """Sets the baseline directly from previously-saved data (used when
+        reopening a saved project) rather than snapshotting whatever's
+        currently loaded, the way capture_baseline() does. Also clears
+        undo/redo history, matching capture_baseline()'s behavior -- neither
+        stack is meaningful across a save/reopen."""
+        self._original_data = copy.deepcopy(data)
+        self._undo_stack = []
+        self._redo_stack = []
+
     def has_edits(self):
         """True if the current data differs from the captured baseline."""
         return self._original_data is not None and self.data != self._original_data
