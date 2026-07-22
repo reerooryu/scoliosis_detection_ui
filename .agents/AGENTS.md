@@ -92,6 +92,7 @@ the canvas. On failure, the image stays visible and the user can retry.
 | `modules/parser.py` | `run_inference()` (blocking HTTP POST to the backend) + `InferenceWorker(QObject)` (thread-safe wrapper run on a `QThread` by `MainWindow`). Validates the response shape (`_validate_inference_payload`) before it ever reaches UI code. |
 | `modules/settings_dialog.py` | `SettingsDialog` — API URL, default Cobb-line color, default export folder, all persisted via `QSettings`. Also has a **fully commented-out** language switch (see "Known deferred work" below). |
 | `modules/export.py` | `ExportDialog` — only "Raw JSON" is wired up (delegates to `modules/utils.py:export_json_data`, timestamped filename). Annotated Image / PDF / CSV are shown disabled ("coming soon"). |
+| `modules/project.py` | `write_project()` / `read_project()` — save/reopen an in-progress assessment as a `.sdproj` zip bundle (image + current data + AI baseline), so a clinician can resume editing later without re-running inference. See "Project save/open" below. |
 | `modules/validation.py` | `ValidationDialog` — a **separate, ML-team QA workflow** (Tools → Model Validation) comparing a prediction JSON against a ground-truth label JSON. Not part of the per-patient clinical flow; deliberately has no shared state with `MainWindow`. |
 | `modules/utils.py` | `export_json_data`, `generate_clinical_summary` (plain-text clinical report string). |
 | `modules/theme.py` | The dark clinical stylesheet + `apply_clinical_theme()`. Applied **only** to the toolbar/stack/status bar — see "Theming" below. |
@@ -239,6 +240,60 @@ Both `_on_reset` and `_on_reset_edits` (and `closeEvent`) guard against
 silently discarding unexported changes via `_confirm_discard_if_dirty`,
 gated on `MainWindow._dirty` (set on drag, cleared on successful export or
 successful "Reset Edits").
+
+## Project save/open
+
+`File → Save Project` / `Save Project As...` / `Open Project...` (Ctrl+Shift+S /
+no shortcut / Ctrl+Shift+O) let a clinician persist progress on one
+in-progress assessment and resume it later, including manual landmark
+edits, **without ever contacting the inference backend again**. This is
+distinct from Export (`modules/export.py`): Export produces a one-way
+clinical deliverable; a project is meant to be reopened and kept editing.
+
+A `.sdproj` file (`modules/project.py`) is a zip bundle:
+`project.json` (schema version + timestamp + original filename),
+`image.<ext>` (an **embedded copy** of the source X-ray, not just a path
+reference — so the project stays self-contained even if the original file
+is later moved, renamed, deleted, or opened on a different machine),
+`model_data.json` (`ScoliosisModelEngine.get_raw_data()` — the current,
+possibly-edited detections), and `baseline_data.json` (the AI's original
+result, via the new `get_baseline_data()` / `restore_baseline()` pair on
+`ScoliosisModelEngine` — `restore_baseline()` sets `_original_data` from
+saved data directly, unlike `capture_baseline()`, which always snapshots
+whatever's currently loaded).
+
+Three things to keep in mind if you touch this:
+- **`AnalysisController.open_project()` deliberately does not render the
+  overlay itself** — it loads the image into the canvas and returns; the
+  actual `overlay_layer.render()` call lives in a separate
+  `finish_open_project()`, invoked by `MainWindow._on_open_project()` via
+  `QTimer.singleShot(150, ...)` *after* switching the stack to the
+  workspace page. This mirrors `OverlayLayer`'s existing rule of never
+  trusting the canvas's viewport size/transform until it's actually
+  settled (see `ImageCanvas`'s own `showEvent`/`_delayed_initial_fit`, on
+  the same 100ms-class timer): if the workspace page has never been shown
+  in this run of the app, rendering the Cobb labels synchronously right
+  after `open_project()` computes their screen positions against a
+  stale/unsettled viewport — they land "way off" the image on that first
+  open, then look correct on every subsequent open once the page's
+  geometry has already settled. The Submit flow never hits this by
+  accident, since the AI request's network round-trip already provides
+  more than enough delay before its own `overlay_layer.render()` call.
+- **`AnalysisSession` caches the source image bytes in memory**
+  (`image_bytes`/`image_ext`/`original_filename`), not just `image_path`.
+  A session from a fresh Submit only has a live file path until the first
+  save — `AnalysisController.save_project()` reads and caches the bytes on
+  that first save so every later save (and any save after the original
+  file might move) no longer depends on that on-disk path at all. A
+  session from `open_project()` has these populated immediately from the
+  bundle, and `image_path` is `None` (there's no live file to retry
+  inference against).
+- **`session.dirty` (unexported edits) and `session.project_dirty`
+  (unsaved-to-project changes) are independent flags**, both driven by the
+  same edit operations (drag/undo/redo/reset edits) — you can export
+  without saving a project, or save a project without exporting.
+  `MainWindow._confirm_discard_if_dirty()` checks both together before
+  Reset, Open Image, Open Project, or closing the window.
 
 ## Threading model (inference requests)
 

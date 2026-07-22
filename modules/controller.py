@@ -1,11 +1,13 @@
 # AnalysisController: the workflow/use-case layer for one clinical
 # assessment -- submit / retry / reset, the background inference-request
-# lifecycle, and landmark-edit operations (drag / undo / redo / reset
-# edits). This used to all live directly on MainWindow, alongside its
-# menu/toolbar/dialog construction; it's pulled out here so MainWindow can
-# go back to just being a composition root + navigation owner + dialog
-# factory, and bind its widgets to signals instead of being handed explicit
-# "go refresh yourself now" calls after every operation. See AGENTS.md.
+# lifecycle, landmark-edit operations (drag / undo / redo / reset edits),
+# and project save/open (modules/project.py) so a clinician can resume an
+# in-progress assessment later without re-running AI inference. This used
+# to all live directly on MainWindow, alongside its menu/toolbar/dialog
+# construction; it's pulled out here so MainWindow can go back to just
+# being a composition root + navigation owner + dialog factory, and bind
+# its widgets to signals instead of being handed explicit "go refresh
+# yourself now" calls after every operation. See AGENTS.md.
 #
 # This controller mutates an AnalysisSession (modules/session.py) and drives
 # an OverlayLayer (modules/overlay.py) directly -- the overlay is really "the
@@ -22,6 +24,7 @@ from PySide6.QtGui import QPixmap
 
 from modules.model_mock import ScoliosisModelEngine
 from modules.parser import InferenceWorker
+from modules.project import write_project, read_project, ProjectLoadError
 
 logger = logging.getLogger(__name__)
 
@@ -209,3 +212,123 @@ class AnalysisController(QObject):
         self.overlay_layer.clear()
         self.session.clear()
         self.status_message.emit("Load a spine X-ray image to begin.")
+
+    # ------------------------------------------------------------------
+    # Project save / open (modules/project.py) -- resuming an in-progress
+    # assessment later, without re-running AI inference.
+    # ------------------------------------------------------------------
+
+    def save_project(self, project_path):
+        """Writes the current session + model_engine state to project_path.
+        Returns True on success; emits error_dialog and returns False on
+        failure (nothing in the session changes in that case)."""
+        if self.session.model_engine is None:
+            return False
+
+        image_bytes = self.session.image_bytes
+        image_ext = self.session.image_ext
+        original_filename = self.session.original_filename
+
+        if image_bytes is None:
+            # A session from a fresh Submit only has a live file path until
+            # the first save -- read and cache the bytes here so every
+            # subsequent save (and any save after the original file might
+            # move or be deleted) no longer depends on that on-disk path.
+            try:
+                with open(self.session.image_path, "rb") as f:
+                    image_bytes = f.read()
+            except OSError as exc:
+                self.error_dialog.emit(
+                    "Save Project Failed", f"Could not read the source image: {exc}"
+                )
+                return False
+            image_ext = os.path.splitext(self.session.image_path)[1] or ".png"
+            original_filename = os.path.basename(self.session.image_path)
+            self.session.image_bytes = image_bytes
+            self.session.image_ext = image_ext
+            self.session.original_filename = original_filename
+
+        try:
+            write_project(
+                self.session.model_engine, image_bytes, image_ext,
+                original_filename, project_path,
+            )
+        except (OSError, ValueError) as exc:
+            self.error_dialog.emit("Save Project Failed", str(exc))
+            return False
+
+        self.session.mark_project_saved(project_path)
+        self.status_message.emit(f"Project saved to {os.path.basename(project_path)}.")
+        return True
+
+    def open_project(self, project_path):
+        """Loads a previously-saved .sdproj bundle: decodes the embedded
+        image, restores the model engine's current + baseline data, and
+        loads the image into the canvas -- all without contacting the
+        inference backend. Returns True on success; emits error_dialog and
+        returns False on failure (nothing in the session changes in that
+        case).
+
+        Deliberately does NOT render the overlay yet -- see
+        finish_open_project(). OverlayLayer's Cobb-label placement maps
+        scene coordinates to screen coordinates using the canvas's current
+        viewport size/transform, which is only correct once the canvas has
+        actually been shown and Qt has finished laying it out. In the
+        Submit flow this is never a problem by accident: the overlay isn't
+        rendered until the AI result comes back over the network, and that
+        round-trip is more than enough time for the canvas (already loaded
+        with the raw image, and about to be switched into view) to settle.
+        open_project() has no such gap -- if the workspace page has never
+        been shown yet in this run of the app, rendering synchronously here
+        would compute label positions against a stale/unsettled viewport
+        and place them "way off" the image (only self-correcting the next
+        time the page is shown, once its geometry is already settled).
+        MainWindow.open_project() calls finish_open_project() only after
+        switching to the workspace page and letting Qt process the
+        resulting show/resize events.
+        """
+        try:
+            image_bytes, image_ext, model_data, baseline_data, metadata = read_project(project_path)
+        except ProjectLoadError as exc:
+            self.error_dialog.emit("Could Not Open Project", str(exc))
+            return False
+
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(image_bytes):
+            self.error_dialog.emit(
+                "Could Not Open Project",
+                "The project's embedded image could not be decoded."
+            )
+            return False
+
+        model_engine = ScoliosisModelEngine(autoload=False)
+        model_engine.load_from_dict(model_data)
+        model_engine.restore_baseline(baseline_data)
+
+        self._cancel_inference_jobs()
+
+        # Clear the overlay before the canvas swaps images, same ordering
+        # requirement as submit(): ImageCanvas.load_image() calls
+        # scene.clear(), which deletes the overlay's C++ items out from
+        # under any still-tracked Python references.
+        self.overlay_layer.clear()
+        self.overlay_layer.canvas.load_image(pixmap)
+
+        self.session.set_project_loaded(
+            model_engine, image_bytes, image_ext,
+            metadata.get("original_filename"), project_path,
+        )
+
+        count = len(model_engine.get_detections())
+        self.status_message.emit(
+            f"Opened project: {os.path.basename(project_path)} — {count} vertebrae detected."
+        )
+        return True
+
+    def finish_open_project(self):
+        """Renders the overlay for a project loaded by open_project(), once
+        the caller (MainWindow) has made the workspace page visible and let
+        Qt settle its layout. No-op if nothing is loaded (e.g. the user hit
+        Full Reset in the brief window before this was called)."""
+        if self.session.model_engine is not None:
+            self.overlay_layer.render(self.session.model_engine)

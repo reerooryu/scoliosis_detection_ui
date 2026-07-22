@@ -36,13 +36,27 @@ class AnalysisSession(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.image_path = None
+        # Raw source-image bytes, ext, and original basename -- kept in
+        # memory (not just referenced by image_path) so Save Project never
+        # depends on the original file still existing on disk. Populated
+        # either lazily on first save (from a live Submit) or immediately
+        # on opening a project (see AnalysisController.save_project() /
+        # open_project()).
+        self.image_bytes = None
+        self.image_ext = None
+        self.original_filename = None
         self.model_engine = None
         self.dirty = False  # True once landmarks have been dragged since the last export
+        self.project_path = None    # path of the currently open .sdproj, if any
+        self.project_dirty = False  # True once changed since the last Save Project
         self.state = self.STATE_EMPTY
 
     @property
     def has_result(self):
         return self.model_engine is not None
+
+    def has_project(self):
+        return self.project_path is not None
 
     def _set_state(self, state):
         self.state = state
@@ -54,24 +68,51 @@ class AnalysisSession(QObject):
 
     def start_loading(self, image_path):
         self.image_path = image_path
+        self.image_bytes = None
+        self.image_ext = None
+        self.original_filename = None
         self.model_engine = None
         self.dirty = False
+        self.project_path = None
+        self.project_dirty = False
         self._set_state(self.STATE_LOADING)
 
-    def set_result(self, model_engine):
+    def set_result(self, model_engine, image_bytes=None, image_ext=None, original_filename=None):
         self.model_engine = model_engine
+        if image_bytes is not None:
+            self.image_bytes = image_bytes
+            self.image_ext = image_ext
+            self.original_filename = original_filename
         self.dirty = False
         self._set_state(self.STATE_READY)
         self.metrics_changed.emit()
         self.edit_state_changed.emit()
+
+    def set_project_loaded(self, model_engine, image_bytes, image_ext, original_filename, project_path):
+        """Like set_result(), but for reopening a saved project: also seeds
+        project_path so subsequent "Save Project" (not "Save Project As...")
+        writes back to the same file, and marks it not-yet-re-modified."""
+        self.image_path = None
+        self.project_path = project_path
+        self.project_dirty = False
+        self.set_result(model_engine, image_bytes, image_ext, original_filename)
+
+    def mark_project_saved(self, project_path):
+        self.project_path = project_path
+        self.project_dirty = False
 
     def set_error(self):
         self._set_state(self.STATE_ERROR)
 
     def clear(self):
         self.image_path = None
+        self.image_bytes = None
+        self.image_ext = None
+        self.original_filename = None
         self.model_engine = None
         self.dirty = False
+        self.project_path = None
+        self.project_dirty = False
         self._set_state(self.STATE_EMPTY)
         self.edit_state_changed.emit()
 
@@ -86,6 +127,7 @@ class AnalysisSession(QObject):
             return
         self.model_engine.update_keypoint(det_idx, kp_idx, x, y)
         self.dirty = True
+        self.project_dirty = True
         self.metrics_changed.emit()
 
     def snapshot_for_undo(self):
@@ -105,6 +147,7 @@ class AnalysisSession(QObject):
         if self.model_engine is None or not self.model_engine.undo():
             return False
         self.dirty = self.model_engine.has_edits()
+        self.project_dirty = True
         self.metrics_changed.emit()
         self.edit_state_changed.emit()
         return True
@@ -113,6 +156,7 @@ class AnalysisSession(QObject):
         if self.model_engine is None or not self.model_engine.redo():
             return False
         self.dirty = self.model_engine.has_edits()
+        self.project_dirty = True
         self.metrics_changed.emit()
         self.edit_state_changed.emit()
         return True
@@ -122,6 +166,7 @@ class AnalysisSession(QObject):
             return False
         self.model_engine.reset_edits()
         self.dirty = False
+        self.project_dirty = True
         self.metrics_changed.emit()
         self.edit_state_changed.emit()
         return True
