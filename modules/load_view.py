@@ -1,9 +1,16 @@
-# Load page: image import (Open Image + Display preview + Submit transition).
+# Load page: image import (Open Image + Display preview + Submit transition)
+# and project import (Open Project shortcut via the same drop zone).
 #
 # Handles drag-and-drop / file-browse import of a spine X-ray image, validates
-# the file type, and shows a thumbnail + Submit control. This module never
-# talks to the backend/model -- it only stores the selected image path and
-# hands it off via the `submitted` signal.
+# the file type, and shows a thumbnail + Submit control. Also accepts a
+# .sdproj project file through the same drop zone / Browse Files dialog, as a
+# convenience so a clinician doesn't have to reach for the File menu just to
+# resume a saved assessment -- those are routed straight to the
+# `project_opened` signal instead, bypassing the thumbnail/Submit staging
+# entirely (a project is already a completed AI result, not something to
+# resubmit). This module never talks to the backend/model itself -- it only
+# stores the selected image path / project path and hands them off via
+# signals.
 
 import os
 from PySide6.QtCore import Qt, Signal, QPointF
@@ -15,10 +22,15 @@ from PySide6.QtWidgets import (
 
 from config import SUPPORTED_IMAGE_EXTENSIONS
 from modules.theme import ACCENT
+from modules.project import PROJECT_EXTENSION
 
 
 def _is_supported_image(path):
     return os.path.splitext(path)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS
+
+
+def _is_project_file(path):
+    return os.path.splitext(path)[1].lower() == PROJECT_EXTENSION
 
 
 def _build_upload_icon(size=56, color=ACCENT):
@@ -59,8 +71,14 @@ def _build_upload_icon(size=56, color=ACCENT):
 
 
 class DropZone(QFrame):
-    """Drag-and-drop landing area with a Browse fallback."""
+    """Drag-and-drop landing area with a Browse fallback.
+
+    Accepts two kinds of files, distinguished by extension and routed to
+    different signals: a spine X-ray image (file_dropped, staged for
+    Submit) or a saved .sdproj project (project_dropped, opened directly).
+    """
     file_dropped = Signal(str)
+    project_dropped = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -79,7 +97,7 @@ class DropZone(QFrame):
         icon.setAlignment(Qt.AlignCenter)
         layout.addWidget(icon)
 
-        text = QLabel("Drag & drop a spine X-ray image here\n— or —")
+        text = QLabel("Drag & drop a spine X-ray image or saved project here\n— or —")
         text.setAlignment(Qt.AlignCenter)
         layout.addWidget(text)
 
@@ -88,23 +106,29 @@ class DropZone(QFrame):
         browse_btn.clicked.connect(self._on_browse)
         layout.addWidget(browse_btn, alignment=Qt.AlignCenter)
 
-        hint = QLabel("Supported formats: JPG, JPEG, PNG")
+        hint = QLabel(f"Supported formats: JPG, JPEG, PNG, {PROJECT_EXTENSION}")
         hint.setObjectName("MetricLabel")
         hint.setAlignment(Qt.AlignCenter)
         layout.addWidget(hint)
 
     def _on_browse(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open Spine X-Ray", "", "Image Files (*.jpg *.jpeg *.png)"
+            self, "Open Spine X-Ray or Project", "",
+            f"All Supported Files (*.jpg *.jpeg *.png *{PROJECT_EXTENSION});;"
+            f"Image Files (*.jpg *.jpeg *.png);;"
+            f"Scoliosis Project Files (*{PROJECT_EXTENSION})"
         )
         if file_path:
             self._validate_and_emit(file_path)
 
     def _validate_and_emit(self, file_path):
+        if _is_project_file(file_path):
+            self.project_dropped.emit(file_path)
+            return
         if not _is_supported_image(file_path):
             QMessageBox.warning(
                 self, "Unsupported File",
-                "Please select a JPG, JPEG, or PNG image file."
+                f"Please select a JPG, JPEG, or PNG image, or a {PROJECT_EXTENSION} project file."
             )
             return
         self.file_dropped.emit(file_path)
@@ -112,7 +136,7 @@ class DropZone(QFrame):
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             path = event.mimeData().urls()[0].toLocalFile()
-            if _is_supported_image(path):
+            if _is_supported_image(path) or _is_project_file(path):
                 self.setProperty("dragActive", True)
                 self.style().unpolish(self)
                 self.style().polish(self)
@@ -134,8 +158,14 @@ class DropZone(QFrame):
 
 
 class LoadPage(QWidget):
-    """Full import page: drop zone + thumbnail preview + Submit action."""
+    """Full import page: drop zone + thumbnail preview + Submit action.
+
+    project_opened is a pass-through of DropZone.project_dropped -- a
+    .sdproj selected here skips this page's own staging entirely and is
+    handled the same way as File -> Open Project (see MainWindow).
+    """
     submitted = Signal(str)
+    project_opened = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -156,12 +186,16 @@ class LoadPage(QWidget):
         title.setFont(QFont("Segoe UI", 17, QFont.Bold))
         layout.addWidget(title)
 
-        subtitle = QLabel("Import a spine X-ray image to begin a Cobb angle assessment.")
+        subtitle = QLabel(
+            "Import a spine X-ray image to begin a Cobb angle assessment, "
+            "or open a previously saved project."
+        )
         subtitle.setObjectName("MetricLabel")
         layout.addWidget(subtitle)
 
         self.drop_zone = DropZone(self)
         self.drop_zone.file_dropped.connect(self._on_file_selected)
+        self.drop_zone.project_dropped.connect(self.project_opened)
         layout.addWidget(self.drop_zone, stretch=1)
 
         # Thumbnail preview row (hidden until a valid image is loaded)
