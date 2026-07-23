@@ -197,6 +197,7 @@ class MainWindow(QMainWindow):
 
         # Widget actions -> controller.
         self.load_page.submitted.connect(self._on_submit)
+        self.load_page.project_opened.connect(self._on_load_page_project_opened)
         self.workspace_page.export_btn.clicked.connect(self._on_export_clicked)
         self.workspace_page.reset_btn.clicked.connect(self._on_reset)
 
@@ -504,6 +505,18 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        self._open_project_path(path)
+
+    def _on_load_page_project_opened(self, path):
+        """A .sdproj dropped or browsed to from the Load page (DropZone
+        accepts both images and project files -- see modules/load_view.py)
+        goes through the exact same open-project flow as File -> Open
+        Project, just without its own file dialog."""
+        if not self._confirm_discard_if_dirty("opening a different project"):
+            return
+        self._open_project_path(path)
+
+    def _open_project_path(self, path):
         if self.controller.open_project(path):
             self.stack.setCurrentWidget(self.workspace_page)
             # If the workspace page has never been shown before in this run
