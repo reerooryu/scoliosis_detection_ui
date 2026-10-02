@@ -52,19 +52,27 @@ If the server runs on another computer, stop here and go to [Run](#run), Step 2.
 ```
 pip install -r requirements-server.txt
 pip install torch torchvision
-pip install "git+https://github.com/facebookresearch/detectron2.git"
+pip install --no-build-isolation "git+https://github.com/facebookresearch/detectron2.git"
 ```
 
+- Run the three commands in this order. Detectron2's installer needs the `torch` you just installed, which is why `--no-build-isolation` is required. Without it the install fails with `No module named 'torch'`.
 - For an NVIDIA GPU, replace the `torch` line with the command for your CUDA version from https://pytorch.org/get-started/locally/.
 - Detectron2 is built from source, so a C++ compiler must be installed (Xcode Command Line Tools on macOS, Visual Studio Build Tools on Windows).
+- On an Apple Silicon Mac, if the build stops with an architecture error, put `ARCHFLAGS="-arch arm64"` in front of the Detectron2 command.
 
 ### Step 5. Add the model weights
 
-The weights are not in this repository. Get `model_final_run.pth` from the project team and put it here:
+The weights are not in this repository. Get the file `model_final_run.pth` from the project team and copy it into this folder (create the folder if it does not exist):
+
+`model/model_t001_6_effb5_mask_kp_2cls/`
+
+This is a location, not a command. To check the file is in place, run:
 
 ```
-model/model_t001_6_effb5_mask_kp_2cls/model_final_run.pth
+ls model/model_t001_6_effb5_mask_kp_2cls
 ```
+
+It should list `model_final_run.pth`.
 
 ## Run
 
