@@ -51,14 +51,12 @@ If the server runs on another computer, stop here and go to [Run](#run), Step 2.
 
 ```
 pip install -r requirements-server.txt
-pip install torch torchvision
 pip install --no-build-isolation "git+https://github.com/facebookresearch/detectron2.git"
 ```
 
-- Run the three commands in this order. Detectron2's installer needs the `torch` you just installed, which is why `--no-build-isolation` is required. Without it the install fails with `No module named 'torch'`.
-- For an NVIDIA GPU, replace the `torch` line with the command for your CUDA version from https://pytorch.org/get-started/locally/.
+- Run the two commands in this order. The first one also installs PyTorch. Detectron2's installer needs it, which is why `--no-build-isolation` is required.
 - Detectron2 is built from source, so a C++ compiler must be installed (Xcode Command Line Tools on macOS, Visual Studio Build Tools on Windows).
-- On an Apple Silicon Mac, if the build stops with an architecture error, put `ARCHFLAGS="-arch arm64"` in front of the Detectron2 command.
+- NVIDIA GPU on Windows: the default PyTorch there is CPU-only. Before the two commands above, install the CUDA build with the command from https://pytorch.org/get-started/locally/.
 
 ### Step 5. Add the model weights
 
@@ -82,7 +80,7 @@ It should list `model_final_run.pth`.
 python server.py
 ```
 
-Wait until it prints `Uvicorn running on http://0.0.0.0:4000`. The first start is slow because the model has to load. If the weights file is missing, the server stops with an error.
+Wait until it prints `Uvicorn running on http://0.0.0.0:4000`. The first start is slow because the model has to load. Warnings printed before that line are normal. If the weights file is missing, the server stops with an error.
 
 To check it is up, open http://127.0.0.1:4000/health in a browser. You should see `{"status":"ok"}`.
 
