@@ -14,7 +14,7 @@ from PySide6.QtGui import QPixmap, QAction, QKeySequence
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QFrame,
     QLabel, QPushButton, QStackedWidget, QToolBar, QSizePolicy, QStatusBar,
-    QMessageBox, QDialog, QFileDialog
+    QMessageBox, QDialog, QFileDialog, QProgressBar
 )
 
 from config import APP_NAME, WINDOW_WIDTH, WINDOW_HEIGHT, INFERENCE_TIMEOUT
@@ -142,6 +142,14 @@ class MainWindow(QMainWindow):
         self.setStatusBar(QStatusBar(self))
         self.statusBar().showMessage("Load a spine X-ray image to begin.")
 
+        # Moving bar in the status bar while an AI request is running.
+        self.busy_bar = QProgressBar(self)
+        self.busy_bar.setRange(0, 0)
+        self.busy_bar.setTextVisible(False)
+        self.busy_bar.setFixedSize(140, 12)
+        self.busy_bar.hide()
+        self.statusBar().addPermanentWidget(self.busy_bar)
+
         # Custom clinical theme is applied only to these specific content
         # widgets -- the menu bar and every dialog stay native OS style.
         theme.apply_clinical_theme(self.toolbar, self.stack, self.statusBar())
@@ -150,6 +158,8 @@ class MainWindow(QMainWindow):
             self.workspace_page.canvas,
             cobb_line_color=SettingsDialog.get_saved_line_color(),
         )
+        # Cobb labels are placed in screen pixels, so re-place them on zoom.
+        self.workspace_page.canvas.view_changed.connect(self.overlay_layer.reposition_labels)
 
         # --- State (AnalysisSession) + workflow (AnalysisController) -------
         self.session = AnalysisSession(self)
@@ -170,6 +180,7 @@ class MainWindow(QMainWindow):
         self.controller.status_message.connect(self.statusBar().showMessage)
         self.controller.error_dialog.connect(self._on_error_dialog)
         self.controller.analysis_completed.connect(self._on_analysis_completed)
+        self.controller.busy_changed.connect(self.busy_bar.setVisible)
 
         # Overlay drag signals -> controller (landmark edit workflow).
         self.overlay_layer.signals.keypoint_moved.connect(self.controller.on_keypoint_dragged)
@@ -394,17 +405,19 @@ class MainWindow(QMainWindow):
         elif state == AnalysisSession.STATE_EMPTY:
             self.statusBar().showMessage("Load a spine X-ray image to begin.")
 
+        self._update_window_title()
+
     def _on_metrics_changed(self):
         engine = self.session.model_engine
         if engine is None:
             return
         metrics = self.workspace_page.metrics
 
-        metrics["Primary Cobb Angle"].set_value("{:.1f} deg".format(engine.get_selected_cobb_angle()))
+        metrics["Primary Cobb Angle"].set_value("{:.1f}°".format(engine.get_selected_cobb_angle()))
 
         pairs = engine.get_angle_pairs()
-        metrics["Curve 1"].set_value("{:.1f} deg".format(pairs[0]["cobb_angle"]) if len(pairs) > 0 else "-")
-        metrics["Curve 2"].set_value("{:.1f} deg".format(pairs[1]["cobb_angle"]) if len(pairs) > 1 else "-")
+        metrics["Curve 1"].set_value("{:.1f}°".format(pairs[0]["cobb_angle"]) if len(pairs) > 0 else "-")
+        metrics["Curve 2"].set_value("{:.1f}°".format(pairs[1]["cobb_angle"]) if len(pairs) > 1 else "-")
 
         apex_idx, deviation_px = engine.get_apex()
         if apex_idx is not None:
@@ -415,6 +428,7 @@ class MainWindow(QMainWindow):
             metrics["CSVL Deviation"].set_value("-")
 
         metrics["Vertebrae"].set_value(str(len(engine.get_detections())))
+        self._update_window_title()
 
     def _on_analysis_completed(self, elapsed):
         self.workspace_page.metrics["Processing Time"].set_value("{:.2f}s (API round-trip)".format(elapsed))
@@ -423,6 +437,32 @@ class MainWindow(QMainWindow):
         self.undo_action.setEnabled(self.session.can_undo())
         self.redo_action.setEnabled(self.session.can_redo())
         self.reset_edits_action.setEnabled(self.session.has_edits())
+        self._update_window_title()
+
+    def _source_name(self):
+        """File name of the X-ray being assessed, or None."""
+        if self.session.original_filename:
+            return self.session.original_filename
+        if self.session.image_path:
+            return os.path.basename(self.session.image_path)
+        return None
+
+    def _update_window_title(self):
+        """Show the open project or image in the title. It is marked as
+        modified while a project has unsaved edits, or an image without a
+        project has unexported edits."""
+        if self.session.project_path:
+            name = os.path.basename(self.session.project_path)
+            modified = self.session.project_dirty
+        else:
+            name = self._source_name()
+            modified = self.session.dirty
+        if self.session.state == AnalysisSession.STATE_EMPTY or not name:
+            self.setWindowModified(False)
+            self.setWindowTitle(APP_NAME)
+            return
+        self.setWindowTitle("{}[*] - {}".format(name, APP_NAME))
+        self.setWindowModified(modified)
 
     def _on_error_dialog(self, title, message):
         QMessageBox.warning(self, title, message)
@@ -465,9 +505,10 @@ class MainWindow(QMainWindow):
     def _on_export_clicked(self):
         if self.session.model_engine is None:
             return
-        dialog = ExportDialog(self.session.model_engine, self)
+        dialog = ExportDialog(self.session.model_engine, self, source_name=self._source_name())
         if dialog.exec() == QDialog.Accepted:
             self.session.dirty = False
+            self._update_window_title()
 
     # ------------------------------------------------------------------
     # Project save / open (modules/project.py, modules/controller.py)
@@ -502,6 +543,7 @@ class MainWindow(QMainWindow):
     def _on_save_project(self):
         if self.session.project_path:
             self.controller.save_project(self.session.project_path)
+            self._update_window_title()
         else:
             self._on_save_project_as()
 
@@ -518,6 +560,7 @@ class MainWindow(QMainWindow):
         if not path.endswith(PROJECT_EXTENSION):
             path += PROJECT_EXTENSION
         self.controller.save_project(path)
+        self._update_window_title()
 
     def _on_open_validation(self):
         dialog = ValidationDialog(self)

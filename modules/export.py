@@ -2,6 +2,7 @@
 # CSV are shown disabled as "coming soon".
 
 import os
+import re
 from datetime import datetime
 
 from PySide6.QtWidgets import (
@@ -16,11 +17,13 @@ from modules.settings_dialog import SettingsDialog
 class ExportDialog(QDialog):
     """Choose export formats and a destination folder."""
 
-    def __init__(self, model_engine, parent=None):
+    def __init__(self, model_engine, parent=None, source_name=None):
         super().__init__(parent)
         self.setWindowTitle("Export Results")
         self.setMinimumWidth(380)
         self.model_engine = model_engine
+        # File name of the X-ray, used in the export file name.
+        self.source_name = source_name
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Choose what to export:"))
@@ -61,6 +64,15 @@ class ExportDialog(QDialog):
         if folder:
             self.folder_edit.setText(folder)
 
+    def _export_file_name(self, timestamp):
+        """scoliosis_assessment_<image name>_<timestamp>.json, so an export
+        can be matched to its X-ray. Spaces and characters that are not
+        allowed in file names become "_"."""
+        stem = os.path.splitext(os.path.basename(self.source_name or ""))[0]
+        stem = re.sub(r'[<>:"/\\|?*\s\x00-\x1f]+', "_", stem).strip("._")[:60]
+        middle = f"{stem}_" if stem else ""
+        return f"scoliosis_assessment_{middle}{timestamp}.json"
+
     def _on_export(self):
         if not self.json_check.isChecked():
             QMessageBox.information(self, "Nothing to Export", "Select at least one format.")
@@ -68,7 +80,7 @@ class ExportDialog(QDialog):
 
         folder = self.folder_edit.text().strip() or os.path.expanduser("~")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = os.path.join(folder, f"scoliosis_assessment_{timestamp}.json")
+        path = os.path.join(folder, self._export_file_name(timestamp))
         ok, message = export_json_data(self.model_engine.get_raw_data(), path)
 
         if ok:

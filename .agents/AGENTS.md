@@ -219,6 +219,10 @@ because of several sharp edges already fixed once each:
   `SettingsDialog.get_saved_line_color()`) and `set_cobb_line_color()` is
   called when Settings is saved, updating existing `CobbMeasurementLineItem`s
   in place via `set_color()` (preserves line width).
+- **Cobb labels are re-placed on zoom.** They are positioned in screen
+  pixels, so `ImageCanvas.view_changed` (emitted on zoom in, zoom out and
+  fit) is connected to `OverlayLayer.reposition_labels()`, which reuses the
+  anchors saved by the last `_render_cobb_overlays` call.
 
 ## Undo/redo and "Reset Edits" vs. full "Reset"
 

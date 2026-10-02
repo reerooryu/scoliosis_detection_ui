@@ -2,13 +2,16 @@
 # about AI results. modules/overlay.py draws those as separate items on top,
 # so the original pixels are never changed.
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
 
 
 class ImageCanvas(QGraphicsView):
     """QGraphicsView/Scene viewer with pan, zoom, and fit-to-view behavior."""
+
+    # Emitted whenever the zoom level changes (zoom in, zoom out, fit).
+    view_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -44,16 +47,19 @@ class ImageCanvas(QGraphicsView):
             self._auto_fit = True
             self.fitInView(self.image_item, Qt.KeepAspectRatio)
             self.zoom_factor = self.transform().m11()
+            self.view_changed.emit()
 
     def zoom_in(self):
         self._auto_fit = False
         self.scale(1.15, 1.15)
         self.zoom_factor = self.transform().m11()
+        self.view_changed.emit()
 
     def zoom_out(self):
         self._auto_fit = False
         self.scale(1.0 / 1.15, 1.0 / 1.15)
         self.zoom_factor = self.transform().m11()
+        self.view_changed.emit()
 
     def wheelEvent(self, event):
         """CTRL+Scroll zooms; plain scroll is left to default (pan/scroll) behavior."""

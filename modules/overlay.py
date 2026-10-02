@@ -190,6 +190,9 @@ class OverlayLayer:
         self.cobb_lines = []
         self.cobb_texts = []
         self.csvl_item = None
+        # (mid_y, min_x, max_x, label) per curve, kept so the labels can be
+        # re-placed when the zoom changes.
+        self._label_anchors = []
         self.interactive_mode = False
 
     def clear(self):
@@ -206,6 +209,7 @@ class OverlayLayer:
         self.cobb_lines = []
         self.cobb_texts = []
         self.csvl_item = None
+        self._label_anchors = []
 
     @staticmethod
     def _remove_item_if_valid(scene, item):
@@ -361,7 +365,14 @@ class OverlayLayer:
             )
             pending_labels.append((mid_y, local_min_x, local_max_x, txt_item))
 
+        self._label_anchors = pending_labels
         self._place_labels_without_overlap(pending_labels)
+
+    def reposition_labels(self):
+        """Re-place the Cobb labels for the current zoom. Their positions are
+        worked out in screen pixels, so they go stale when the zoom changes."""
+        if self._label_anchors and all(shiboken6.isValid(a[3]) for a in self._label_anchors):
+            self._place_labels_without_overlap(self._label_anchors)
 
     def _place_labels_without_overlap(self, pending_labels, min_gap_px=10, hug_gap_px=16, edge_margin_px=6):
         """Place each Cobb label beside its own curve, on whichever side has
