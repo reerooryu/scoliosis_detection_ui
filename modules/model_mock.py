@@ -1,4 +1,5 @@
-# Mock model inference and calculation engine for Scoliosis Detection UI
+# ScoliosisModelEngine: holds one analysis result and recalculates its angles.
+# The file name is historical: this handles real server results, not a mock.
 
 import copy
 import json
@@ -8,20 +9,14 @@ from modules.geometry import (
     cobb_angle_between_obliques, compute_csvl_x, compute_apex, oblique_angle,
 )
 
-# How many completed drag edits to keep in the undo history. Each entry is a
-# deep copy of the full detections payload, so this is capped to keep memory
-# bounded for very long editing sessions.
+# Maximum undo steps. Each step is a full copy of the result.
 UNDO_HISTORY_LIMIT = 50
 
 class ScoliosisModelEngine:
     def __init__(self, json_path=DEFAULT_TEST_JSON_PATH, autoload=True):
         self.json_path = json_path
         self.data = None
-        # Snapshot of the AI's original, un-edited result -- captured via
-        # capture_baseline() once the data is fully loaded and scaled to the
-        # displayed image. Lets "Reset Edits" discard manual adjustments
-        # without losing the whole loaded image/analysis (that's the
-        # toolbar's full Reset instead).
+        # The AI's unedited result, kept so "Reset Edits" can restore it.
         self._original_data = None
         self._undo_stack = []
         self._redo_stack = []
@@ -29,7 +24,7 @@ class ScoliosisModelEngine:
             self.load_data()
 
     def load_data(self):
-        """Loads and parses the test_output.json file (demo/offline mode)."""
+        """Load the bundled test JSON. For manual testing only; the app uses load_from_dict()."""
         if not os.path.exists(self.json_path):
             raise FileNotFoundError(f"Model mock data file not found at {self.json_path}")
 
@@ -40,17 +35,12 @@ class ScoliosisModelEngine:
         self.recalculate_all_metrics()
 
     def load_from_dict(self, data):
-        """Loads a result dict already fetched from the live inference API
-        (see modules/parser.py) instead of reading it from disk. Used once
-        the backend model is reachable; falls back to load_data() (the
-        bundled test JSON) when it isn't."""
+        """Load a result dict from the inference server or a saved project."""
         self.data = data
         self.recalculate_all_metrics()
 
     def scale_coordinates(self, target_width, target_height):
-        """
-        Scales coordinates (bounding boxes and keypoints) to match the target image resolution.
-        """
+        """Scale boxes and keypoints to the displayed image size."""
         input_shape = self.get_input_shape() # [height, width]
         orig_height, orig_width = input_shape[0], input_shape[1]
 
@@ -103,20 +93,15 @@ class ScoliosisModelEngine:
         return self.data
 
     def get_csvl_x(self):
-        """X-coordinate of the CSVL (Central Sacral Vertical Line) reference
-        -- see modules/geometry.py for how the reference vertebra is chosen."""
+        """X position of the CSVL reference line (see modules/geometry.py)."""
         return compute_csvl_x(self.get_detections())
 
     def get_apex(self):
-        """Returns (apex_detection_index, deviation_px) -- the vertebra that
-        deviates furthest from the CSVL."""
+        """Returns (apex_index, deviation_px): the vertebra furthest from the CSVL."""
         return compute_apex(self.get_detections(), self.get_csvl_x())
 
     def update_keypoint(self, detection_index, keypoint_index, x, y):
-        """
-        Updates the coordinate of a specific keypoint of a vertebra.
-        Triggers recalculation of oblique and Cobb angles.
-        """
+        """Move one keypoint, then recalculate every angle."""
         detections = self.get_detections()
         if 0 <= detection_index < len(detections):
             det = detections[detection_index]
@@ -139,13 +124,9 @@ class ScoliosisModelEngine:
     # ------------------------------------------------------------------
 
     def capture_baseline(self):
-        """Snapshots the current data as the AI's original result. Call this
-        once, after the data is fully loaded AND scaled to the displayed
-        image's resolution (main_window.py does this right after
-        scale_coordinates()) -- capturing it any earlier would freeze in the
-        pre-scale coordinates, which "Reset Edits" would then wrongly
-        restore. Also clears undo/redo history, since both are meaningless
-        once a new analysis has been loaded."""
+        """Remember the current data as the AI's original result and clear
+        undo/redo. Call this after scale_coordinates(), or "Reset Edits"
+        would restore unscaled coordinates."""
         self._original_data = copy.deepcopy(self.data)
         self._undo_stack = []
         self._redo_stack = []
@@ -154,17 +135,11 @@ class ScoliosisModelEngine:
         return self._original_data is not None
 
     def get_baseline_data(self):
-        """Returns the captured AI baseline dict -- e.g. for persisting to a
-        saved project (see modules/project.py) -- or None if no baseline has
-        been captured yet."""
+        """The AI's original result (stored in project files), or None."""
         return self._original_data
 
     def restore_baseline(self, data):
-        """Sets the baseline directly from previously-saved data (used when
-        reopening a saved project) rather than snapshotting whatever's
-        currently loaded, the way capture_baseline() does. Also clears
-        undo/redo history, matching capture_baseline()'s behavior -- neither
-        stack is meaningful across a save/reopen."""
+        """Set the AI's original result from a saved project and clear undo/redo."""
         self._original_data = copy.deepcopy(data)
         self._undo_stack = []
         self._redo_stack = []
@@ -174,9 +149,8 @@ class ScoliosisModelEngine:
         return self._original_data is not None and self.data != self._original_data
 
     def reset_edits(self):
-        """Discards manual keypoint adjustments, restoring the AI's original
-        detections (and clearing undo/redo history). Returns False if there
-        is no baseline to restore (e.g. nothing has been loaded yet)."""
+        """Discard manual edits and restore the AI's original result.
+        Returns False if there is nothing to restore."""
         if self._original_data is None:
             return False
         self.data = copy.deepcopy(self._original_data)
@@ -186,10 +160,8 @@ class ScoliosisModelEngine:
         return True
 
     def snapshot_for_undo(self):
-        """Pushes the current data onto the undo stack. Call this once per
-        drag gesture, right as it *starts* (before any change is applied) --
-        not per pixel of movement -- so each undo step corresponds to one
-        completed adjustment, not to every intermediate mouse-move tick."""
+        """Save the current data as one undo step. Call once when a drag
+        starts, not on every mouse move."""
         self._undo_stack.append(copy.deepcopy(self.data))
         if len(self._undo_stack) > UNDO_HISTORY_LIMIT:
             self._undo_stack.pop(0)
@@ -202,8 +174,7 @@ class ScoliosisModelEngine:
         return len(self._redo_stack) > 0
 
     def undo(self):
-        """Reverts the most recent completed drag. Returns False if there's
-        nothing to undo."""
+        """Undo the last drag. Returns False if there is nothing to undo."""
         if not self._undo_stack:
             return False
         self._redo_stack.append(copy.deepcopy(self.data))
@@ -212,8 +183,7 @@ class ScoliosisModelEngine:
         return True
 
     def redo(self):
-        """Re-applies the most recently undone drag. Returns False if
-        there's nothing to redo."""
+        """Redo the last undone drag. Returns False if there is nothing to redo."""
         if not self._redo_stack:
             return False
         self._undo_stack.append(copy.deepcopy(self.data))
@@ -222,26 +192,14 @@ class ScoliosisModelEngine:
         return True
 
     def calculate_oblique_angle(self, p1, p2):
-        """
-        Calculates the oblique angle in degrees between two endplate corner
-        points p1 (left) and p2 (right). Delegates to modules.geometry.oblique_angle,
-        which is a direct port of server.py's cal_oblique01 -- NOT a plain
-        atan2(dy, dx). This must match the backend's own convention exactly:
-        a plain atan2 disagrees with cal_oblique01 by up to 180 degrees
-        whenever a vertebra is rotated enough that its left/right keypoints'
-        x-order flips (dx < 0) -- e.g. right at a curve's apex.
-        """
+        """Endplate tilt in degrees from p1 (left corner) to p2 (right
+        corner). See modules/geometry.py:oblique_angle."""
         return oblique_angle(p1, p2)
 
     def recalculate_all_metrics(self):
-        """
-        Main mathematical recalculation engine.
-        Updates:
-          - Upper/lower obliques for all detections.
-          - List of upper/lower obliques at the top level.
-          - Cobb angles for all pre-defined angle pairs.
-          - Maximum/selected Cobb angle.
-        """
+        """Recalculate everything derived from the keypoints: each vertebra's
+        center and tilts, each curve's Cobb angle, and the largest Cobb angle.
+        Runs on load and after every edit, replacing the server's own values."""
         detections = self.get_detections()
 
         # 1. Update oblique angles for each detection

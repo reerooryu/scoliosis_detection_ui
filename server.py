@@ -25,16 +25,15 @@ ROOT_DIR = Path(__file__).resolve().parent
 WEIGHTS_PATH = ROOT_DIR / "model" / "model_t001_6_effb5_mask_kp_2cls" / "model_final_run.pth"
 
 predictor = None
-# FastAPI executes synchronous endpoints in its worker threadpool.  Keep
-# model construction and predictor use serialized: Detectron2 predictor
-# initialization is expensive and concurrent GPU calls on one shared model
-# can cause duplicate allocations or unsafe execution.
+# FastAPI runs sync endpoints in a threadpool, so the shared model is
+# guarded: one lock to build it only once, one to run one inference at a time.
 _predictor_lock = Lock()
 _inference_lock = Lock()
 
 
 @BACKBONE_REGISTRY.register()
 def build_efficientnet_b5_fpn(cfg, input_shape: ShapeSpec):
+    """Detectron2 backbone: timm EfficientNet-B5 features wrapped in an FPN."""
     body = timm.create_model(
         "efficientnet_b5",
         pretrained=False,
@@ -42,6 +41,7 @@ def build_efficientnet_b5_fpn(cfg, input_shape: ShapeSpec):
         out_indices=(1, 2, 3, 4),
     )
 
+    # Run a dummy image through once to learn each feature map's channel count.
     with torch.no_grad():
         device = "cuda" if torch.cuda.is_available() else "cpu"
         body = body.to(device)
@@ -78,14 +78,13 @@ def build_efficientnet_b5_fpn(cfg, input_shape: ShapeSpec):
 
 
 def load_predictor():
+    """Build the model once and reuse it. Safe to call from several threads."""
     global predictor
     if predictor is not None:
         return predictor
 
     with _predictor_lock:
-        # A second request can reach this point while the first is loading the
-        # weights. Recheck while holding the lock to avoid allocating the
-        # model (and its GPU memory) twice.
+        # Another thread may have built it while this one waited for the lock.
         if predictor is not None:
             return predictor
 
@@ -118,6 +117,9 @@ def load_predictor():
 
 
 def cal_oblique01(x1_, y1_, x2_, y2_):
+    """Endplate tilt in degrees from its left corner (x1, y1) to its right
+    corner (x2, y2). modules/geometry.py:oblique_angle is a copy of this and
+    must give exactly the same results."""
     x_x = x1_ - x2_
     y_y = y1_ - y2_
     if (x_x == 0) and (y_y == 0):
@@ -140,6 +142,8 @@ def cal_oblique01(x1_, y1_, x2_, y2_):
 
 
 def savgol_smooth_1d(y, window=5, polyorder=2, mode="reflect"):
+    """Savitzky-Golay smoothing of a 1D series. The window is forced to be
+    odd and at least polyorder + 2."""
     y = np.asarray(y, dtype=float).reshape(-1)
     n = y.size
     if n == 0:
@@ -177,6 +181,9 @@ def savgol_smooth_1d(y, window=5, polyorder=2, mode="reflect"):
 
 
 def count_curves_filtered(y_filt, prom=3.0, prom_window=2, min_dist=2):
+    """Find the peaks and valleys of a tilt series. One is kept only if it
+    stands out from its neighbours by at least `prom` degrees; of two closer
+    than `min_dist` positions, the more extreme one is kept."""
     y = np.asarray(y_filt, dtype=float).reshape(-1)
     n = len(y)
     if n < 3:
@@ -261,6 +268,7 @@ def extend_segment(p1, p2, extend=50):
 
 
 def read_image_bytes(image_bytes: bytes) -> np.ndarray:
+    """Decode uploaded bytes into an RGB image array."""
     arr = np.frombuffer(image_bytes, np.uint8)
     image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if image is None:
@@ -269,6 +277,7 @@ def read_image_bytes(image_bytes: bytes) -> np.ndarray:
 
 
 def prepare_image_for_model(image: np.ndarray) -> np.ndarray:
+    """Resize to the fixed model input size: 768 wide by 1536 high."""
     return cv2.resize(image, (768, 1536), interpolation=cv2.INTER_LINEAR)
 
 
@@ -279,6 +288,8 @@ def scale_prediction_data(
     original_shape: tuple,
     model_shape: tuple,
 ):
+    """Map boxes, masks and keypoints from model-input size back to the
+    original image size."""
     h0, w0 = original_shape[:2]
     h1, w1 = model_shape[:2]
     h_ratio = h0 / h1
@@ -312,6 +323,8 @@ def filter_and_sort_detections(
     keypoints: np.ndarray,
     score_threshold: float = 0.8,
 ):
+    """Keep detections scoring at least score_threshold, keep only the best
+    class-1 detection, and sort them top to bottom."""
     pc0 = []
     pc1 = []
     for i, cls in enumerate(classes):
@@ -328,8 +341,7 @@ def filter_and_sort_detections(
             pc1.append(entry)
 
     if len(pc1) > 1:
-        # Keep the highest-confidence candidate, not just whichever happened
-        # to come first in detection order.
+        # Keep the most confident one, not just the first one found.
         pc1 = [max(pc1, key=lambda e: e["score"])]
 
     joint = pc0 + pc1
@@ -353,6 +365,9 @@ def compute_cobb_results(
     keypoints: List[np.ndarray],
     scores_list: Optional[List[float]] = None,
 ):
+    """Compute each vertebra's endplate tilts, pick the end vertebrae of each
+    curve (turning points of the tilt series, plus any class-1 detection),
+    and return the Cobb angle between each pair of neighbouring end vertebrae."""
     results: Dict[str, object] = {
         "all_angles": [],
         "selected_cobb_angle": None,
@@ -450,12 +465,12 @@ def compute_cobb_results(
 
 
 def run_inference(image_bytes: bytes) -> Dict[str, object]:
+    """Full pipeline for one image: decode, resize, predict, scale back to
+    the original size, then compute the Cobb results."""
     image = read_image_bytes(image_bytes)
     image_model = prepare_image_for_model(image)
     predictor = load_predictor()
-    # One shared predictor is intentionally serialized. Requests can still
-    # wait here in FastAPI's threadpool without blocking the async event loop
-    # or /health.
+    # One shared model, so only one inference runs at a time.
     with _inference_lock:
         outputs = predictor(image_model)
     instances = outputs["instances"].to("cpu")
@@ -480,7 +495,7 @@ def run_inference(image_bytes: bytes) -> Dict[str, object]:
 
 @app.post("/predict")
 def predict_api(file: UploadFile = File(...)):
-    if file.content_type.split("/")[0] != "image":
+    if (file.content_type or "").split("/")[0] != "image":
         raise HTTPException(status_code=400, detail="File must be an image")
 
     image_bytes = file.file.read()
@@ -500,5 +515,7 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
 
+    # Load the model before opening the port, so a missing weights file
+    # fails at startup instead of on the first request.
     load_predictor()
     uvicorn.run(app, host="0.0.0.0", port=4000)

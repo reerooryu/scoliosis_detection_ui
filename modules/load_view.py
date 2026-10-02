@@ -1,16 +1,6 @@
-# Load page: image import (Open Image + Display preview + Submit transition)
-# and project import (Open Project shortcut via the same drop zone).
-#
-# Handles drag-and-drop / file-browse import of a spine X-ray image, validates
-# the file type, and shows a thumbnail + Submit control. Also accepts a
-# .sdproj project file through the same drop zone / Browse Files dialog, as a
-# convenience so a clinician doesn't have to reach for the File menu just to
-# resume a saved assessment -- those are routed straight to the
-# `project_opened` signal instead, bypassing the thumbnail/Submit staging
-# entirely (a project is already a completed AI result, not something to
-# resubmit). This module never talks to the backend/model itself -- it only
-# stores the selected image path / project path and hands them off via
-# signals.
+# Load page: pick a spine X-ray (drag-and-drop or Browse), preview it, and
+# Submit. A saved .sdproj project can be dropped or browsed to here as well;
+# it opens directly with no Submit step. This page never talks to the server.
 
 import os
 from PySide6.QtCore import Qt, Signal, QPointF
@@ -34,13 +24,8 @@ def _is_project_file(path):
 
 
 def _build_upload_icon(size=56, color=ACCENT):
-    """Draws a simple upload-arrow-into-tray glyph with QPainter.
-
-    Used instead of an emoji character: emoji glyph coverage/rendering
-    varies a lot across OS/font installs (it showed up as a blank "tofu"
-    box in headless testing here), which isn't something clinical software
-    should depend on for a UI it's actually used every day.
-    """
+    """Draw a simple upload icon with QPainter. An emoji is avoided because
+    it does not render on every system."""
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.transparent)
 
@@ -71,12 +56,8 @@ def _build_upload_icon(size=56, color=ACCENT):
 
 
 class DropZone(QFrame):
-    """Drag-and-drop landing area with a Browse fallback.
-
-    Accepts two kinds of files, distinguished by extension and routed to
-    different signals: a spine X-ray image (file_dropped, staged for
-    Submit) or a saved .sdproj project (project_dropped, opened directly).
-    """
+    """Drop area with a Browse button. An image emits file_dropped (staged
+    for Submit); a .sdproj emits project_dropped (opened directly)."""
     file_dropped = Signal(str)
     project_dropped = Signal(str)
 
@@ -112,26 +93,31 @@ class DropZone(QFrame):
         layout.addWidget(hint)
 
     def _on_browse(self):
+        """Open the file picker. Returns True if an image was staged."""
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Open Spine X-Ray or Project", "",
             f"All Supported Files (*.jpg *.jpeg *.png *{PROJECT_EXTENSION});;"
             f"Image Files (*.jpg *.jpeg *.png);;"
             f"Scoliosis Project Files (*{PROJECT_EXTENSION})"
         )
-        if file_path:
-            self._validate_and_emit(file_path)
+        if not file_path:
+            return False
+        return self._validate_and_emit(file_path)
 
     def _validate_and_emit(self, file_path):
+        """Send a chosen file to the right signal. Returns True only when an
+        image was staged for Submit (a project opens directly instead)."""
         if _is_project_file(file_path):
             self.project_dropped.emit(file_path)
-            return
+            return False
         if not _is_supported_image(file_path):
             QMessageBox.warning(
                 self, "Unsupported File",
                 f"Please select a JPG, JPEG, or PNG image, or a {PROJECT_EXTENSION} project file."
             )
-            return
+            return False
         self.file_dropped.emit(file_path)
+        return True
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -158,23 +144,15 @@ class DropZone(QFrame):
 
 
 class LoadPage(QWidget):
-    """Full import page: drop zone + thumbnail preview + Submit action.
-
-    project_opened is a pass-through of DropZone.project_dropped -- a
-    .sdproj selected here skips this page's own staging entirely and is
-    handled the same way as File -> Open Project (see MainWindow).
-    """
+    """Import page: drop zone, thumbnail preview and Submit. A .sdproj
+    chosen here is passed on through project_opened."""
     submitted = Signal(str)
     project_opened = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Plain QWidget subclasses don't paint their stylesheet background
-        # when embedded as a non-top-level child (only real windows and
-        # style-aware widgets like QFrame/QPushButton do that automatically).
-        # Without this, LoadPage renders with the native OS window color
-        # once it's nested inside the QStackedWidget/QMainWindow, even
-        # though the same stylesheet renders fine as a standalone window.
+        # Without this, a plain QWidget inside the stack does not paint its
+        # stylesheet background.
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.image_path = None
 

@@ -4,10 +4,8 @@ import json
 import os
 
 def export_json_data(data, export_path):
-    """
-    Saves the modified model data dictionary to a JSON file.
-    Creates parent directories if they don't exist.
-    """
+    """Write data to export_path as JSON, creating the folder if needed.
+    Returns (ok, message)."""
     try:
         # Resolve folder path
         parent_dir = os.path.dirname(export_path)
@@ -21,10 +19,8 @@ def export_json_data(data, export_path):
         return False, f"Failed to export: {str(e)}"
 
 def generate_clinical_summary(data):
-    """
-    Generates a professional, clinical-grade text summary of the
-    vertebrae status and Cobb angle results.
-    """
+    """Build a plain-text summary of the Cobb results. Only used by the
+    retired wizard UI (modules/pages.py)."""
     summary = []
     summary.append("==================================================")
     summary.append("       SCOLIOSIS ASSESSMENT CLINICAL REPORT       ")

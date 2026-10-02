@@ -70,7 +70,7 @@ The Settings dialog's "Inference API URL" (default
   processing time) + Export/Reset buttons.
 
 On Submit, `MainWindow._on_submit` shows the workspace immediately with just
-the raw image, then kicks off `_run_inference`, which runs
+the raw image, and `AnalysisController.submit()` runs
 `modules/parser.py:InferenceWorker` on a background `QThread` (never blocks
 the UI). On success, the JSON result is handed to
 `modules/model_mock.py:ScoliosisModelEngine`, which computes/recomputes all
@@ -83,13 +83,15 @@ the canvas. On failure, the image stays visible and the user can retry.
 |---|---|
 | `app.py` | Entry point. Creates `QApplication` + `MainWindow`. |
 | `config.py` | All constants: window size, API URL/timeout, keypoint index names, overlay colors, handle radii. |
-| `modules/main_window.py` | `MainWindow` (menu bar, toolbar, page-switching, inference lifecycle, undo/redo wiring, reset/settings/export/validation entry points) and `WorkspacePage` (canvas + measurement panel widget). This is the biggest, most central file. |
+| `modules/main_window.py` | `MainWindow` (menu bar, toolbar, page-switching, signal wiring, reset/settings/export/validation entry points) and `WorkspacePage` (canvas + measurement panel widget). This is the biggest, most central file. |
+| `modules/controller.py` | `AnalysisController` — the workflow: submit/retry/reset, the background inference request, landmark edits (drag/undo/redo/reset edits), and project save/open. The only thing that changes an `AnalysisSession`. |
+| `modules/session.py` | `AnalysisSession` — state for one loaded image (source image, model engine, dirty flags) plus the signals `MainWindow` listens to. No widgets, threads or HTTP. |
 | `modules/load_view.py` | `LoadPage` / `DropZone` — image import UI only. No backend/model knowledge. |
 | `modules/canvas.py` | `ImageCanvas(QGraphicsView)` — dumb base-image viewer (pan/zoom/fit). No AI/overlay knowledge. |
 | `modules/overlay.py` | All `QGraphicsItem` subclasses for landmarks/outlines/Cobb lines/CSVL, plus `OverlayLayer`, which owns and incrementally updates them from a `ScoliosisModelEngine`. See "Overlay rendering" below — this file has the most subtle bugs fixed in it. |
 | `modules/model_mock.py` | `ScoliosisModelEngine` — the clinical data/math state machine: loads a result (from disk or from the live API), scales coordinates to the displayed image, recalculates oblique/Cobb angles after any edit, and owns undo/redo + baseline/"Reset Edits". Despite the name ("mock"), this is used for **both** the demo JSON and live API results — the name is a holdover from before the real backend existed. |
 | `modules/geometry.py` | Pure, unit-testable math: `oblique_angle` (exact port of `server.py`'s `cal_oblique01`), `cobb_angle_between_obliques` (shared with `server.py`), CSVL/apex computation, and the prediction-vs-label comparison functions used by `modules/validation.py`. |
-| `modules/parser.py` | `run_inference()` (blocking HTTP POST to the backend) + `InferenceWorker(QObject)` (thread-safe wrapper run on a `QThread` by `MainWindow`). Validates the response shape (`_validate_inference_payload`) before it ever reaches UI code. |
+| `modules/parser.py` | `run_inference()` (blocking HTTP POST to the backend) + `InferenceWorker(QObject)` (thread-safe wrapper run on a `QThread` by `MainWindow`). Validates the response shape (`validate_inference_payload`) before it ever reaches UI code. |
 | `modules/settings_dialog.py` | `SettingsDialog` — API URL, default Cobb-line color, default export folder, all persisted via `QSettings`. Also has a **fully commented-out** language switch (see "Known deferred work" below). |
 | `modules/export.py` | `ExportDialog` — only "Raw JSON" is wired up (delegates to `modules/utils.py:export_json_data`, timestamped filename). Annotated Image / PDF / CSV are shown disabled ("coming soon"). |
 | `modules/project.py` | `write_project()` / `read_project()` — save/reopen an in-progress assessment as a `.sdproj` zip bundle (image + current data + AI baseline), so a clinician can resume editing later without re-running inference. See "Project save/open" below. |
@@ -134,10 +136,11 @@ this shape:
 }
 ```
 
-`modules/parser.py:_validate_inference_payload` enforces the minimum shape
+`modules/parser.py:validate_inference_payload` enforces the minimum shape
 (`input_shape`, `detections[].keypoints` with ≥5 points, `angle_pairs[]`
 index fields) at the network boundary, before anything reaches
-`ScoliosisModelEngine` or the UI.
+`ScoliosisModelEngine` or the UI. `AnalysisController.open_project()` runs
+the same check on a saved project's data before loading it.
 
 **Coordinate spaces**: the backend's `input_shape`/keypoints are in the
 *original uploaded image's* pixel space. The client always calls
@@ -238,7 +241,7 @@ because of several sharp edges already fixed once each:
 
 Both `_on_reset` and `_on_reset_edits` (and `closeEvent`) guard against
 silently discarding unexported changes via `_confirm_discard_if_dirty`,
-gated on `MainWindow._dirty` (set on drag, cleared on successful export or
+gated on `session.dirty` / `session.project_dirty` (set on drag, cleared on successful export or
 successful "Reset Edits").
 
 ## Project save/open
@@ -297,7 +300,7 @@ Three things to keep in mind if you touch this:
 
 ## Threading model (inference requests)
 
-`MainWindow._run_inference` creates a fresh `QThread` + `InferenceWorker`
+`AnalysisController._run_inference` creates a fresh `QThread` + `InferenceWorker`
 pair per request (never reuses one), tagged with an incrementing
 `request_id`. Key points if you touch this:
 
@@ -309,7 +312,7 @@ pair per request (never reuses one), tagged with an incrementing
 - Lifecycle teardown is the standard Qt chain:
   `worker.finished → thread.quit → thread.finished → {worker,thread}.
   deleteLater`. Both the `QThread` and `InferenceWorker` Python references
-  are kept in `MainWindow._inference_jobs` until `thread.finished` fires —
+  are kept in `AnalysisController._inference_jobs` until `thread.finished` fires —
   releasing them earlier risks premature C++ destruction.
 - `closeEvent` refuses to close while any job is still outstanding.
 

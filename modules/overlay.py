@@ -1,11 +1,7 @@
-# Measurement overlay graphics items + rendering orchestration.
-#
-# These QGraphicsItem subclasses render AI-predicted landmarks and Cobb
-# measurement lines on top of the base image from modules/canvas.py. They
-# are drawn as their own scene items and never modify the underlying X-ray
-# pixmap. `OverlayLayer` at the bottom of this file owns and updates those
-# items for a given ImageCanvas + ScoliosisModelEngine pair, and is what
-# modules/main_window.py drives after a live/mock inference result comes in.
+# Overlay items drawn on top of the X-ray: vertebra outlines, landmark
+# handles, Cobb lines and labels, and the CSVL. OverlayLayer (bottom of this
+# file) creates and updates them from a ScoliosisModelEngine. The X-ray
+# itself is never modified.
 
 import math
 
@@ -27,26 +23,19 @@ from config import (
 
 
 class OverlaySignals(QObject):
-    """Emitted when a landmark is dragged in Edit mode: (det_idx, kp_idx, x, y)."""
+    """Signals for landmark drags in Edit mode."""
+    # Every mouse-move tick of a drag: (det_idx, kp_idx, x, y).
     keypoint_moved = Signal(int, int, float, float)
-    # Emitted once per drag gesture (mouse press / release on a handle), not
-    # per pixel of movement -- used to snapshot undo state and to trigger a
-    # full, safe overlay rebuild once the drag is no longer active.
+    # Once per drag, on mouse press and on release: (det_idx, kp_idx).
     drag_started = Signal(int, int)
     drag_finished = Signal(int, int)
 
 
 class LandmarkHandleItem(QGraphicsEllipseItem):
-    """Circle handle representing a single vertebra keypoint.
+    """Circle handle for one vertebra keypoint.
 
-    The 4 corner keypoints are draggable. The center keypoint (KP_CENTER) is
-    not: ScoliosisModelEngine.recalculate_all_metrics() always recomputes it
-    as the average of the 4 corner keypoints, so it is a derived value, not a
-    source of truth. It's still rendered -- as a visual reference showing
-    where that average currently sits -- but is non-interactive. (It used to
-    be draggable like any other handle; the drag appeared to work live but
-    was silently discarded on the very next recalculation, while still
-    leaving behind a spurious undo snapshot and a "dirty" flag.)
+    The four corners are draggable. The center is shown but not draggable:
+    it is always recalculated as the average of the corners.
     """
 
     def __init__(self, det_idx, kp_idx, x, y, parent_item=None, signals=None):
@@ -63,13 +52,7 @@ class LandmarkHandleItem(QGraphicsEllipseItem):
         else:
             self.setBrush(QBrush(QColor(*COLOR_KEYPOINT_CORNER)))
 
-        # Keeps the handle's on-screen size constant regardless of the
-        # canvas's zoom level. Without this, the ellipse's radius is in
-        # scene coordinates like everything else, so it grows right
-        # along with the image -- at a few clicks of zoom-in (exactly
-        # when you'd want Edit Mode for precision) the handles quickly
-        # became huge. HANDLE_RADIUS/ACTIVE_HANDLE_RADIUS are screen
-        # pixels now, not scene units.
+        # Keep the handle the same on-screen size at any zoom level.
         flags = QGraphicsEllipseItem.ItemIgnoresTransformations
         if self.draggable:
             flags |= QGraphicsEllipseItem.ItemIsMovable | QGraphicsEllipseItem.ItemSendsGeometryChanges
@@ -181,8 +164,7 @@ class CSVLLineItem(QGraphicsLineItem):
 
 
 def extended_line_points(p1, p2, extend_len=200):
-    """Returns (start, end) QPointF pair extending the p1->p2 line outward,
-    for drawing a full Cobb-angle intersecting plane."""
+    """Returns (start, end) points for the p1->p2 line extended at both ends."""
     dx = p2.x() - p1.x()
     dy = p2.y() - p1.y()
     length = math.sqrt(dx * dx + dy * dy)
@@ -195,13 +177,8 @@ def extended_line_points(p1, p2, extend_len=200):
 
 
 class OverlayLayer:
-    """Owns and renders the landmark/Cobb-angle graphics items for one
-    ImageCanvas, driven by a ScoliosisModelEngine's detection data.
-
-    Kept separate from ImageCanvas (dumb base image viewer) and the model
-    engine (data/math) so each stays single-purpose: this class is purely
-    "given these detections, draw/update these scene items."
-    """
+    """Creates and updates the overlay items for one ImageCanvas from a
+    ScoliosisModelEngine's data."""
 
     def __init__(self, canvas, cobb_line_color=COLOR_COBB_LINE):
         self.canvas = canvas
@@ -216,14 +193,8 @@ class OverlayLayer:
         self.interactive_mode = False
 
     def clear(self):
-        """Remove tracked overlay items without touching deleted C++ wrappers.
-
-        ``QGraphicsScene.clear()`` deletes scene-owned QGraphicsItems.  The
-        corresponding Python wrappers can briefly remain in our lists, so
-        calling a Qt method on one would raise ``RuntimeError: Internal C++
-        object already deleted``.  Test the wrapper before interacting with
-        it; clearing our Python references is still required in either case.
-        """
+        """Remove all overlay items. QGraphicsScene.clear() may already have
+        deleted them, so each one is checked before it is touched."""
         scene = self.canvas.scene()
         for item in self.outline_items + self.handle_items + self.cobb_lines + self.cobb_texts:
             self._remove_item_if_valid(scene, item)
@@ -238,7 +209,7 @@ class OverlayLayer:
 
     @staticmethod
     def _remove_item_if_valid(scene, item):
-        """Detach ``item`` only while its underlying C++ instance exists."""
+        """Remove item from the scene only if Qt has not already deleted it."""
         if item is not None and shiboken6.isValid(item) and item.scene() is scene:
             scene.removeItem(item)
 
@@ -256,8 +227,8 @@ class OverlayLayer:
                 line.set_color(color)
 
     def render(self, model_engine):
-        """Creates the overlay items on first call, updates positions on
-        subsequent calls (e.g. after a drag-triggered recalculation)."""
+        """Create the overlay items on the first call; update them in place
+        on later calls (for example on every tick of a drag)."""
         scene = self.canvas.scene()
         detections = model_engine.get_detections()
         angle_pairs = model_engine.get_angle_pairs()
@@ -289,17 +260,9 @@ class OverlayLayer:
             for det in detections:
                 for kp in det["keypoints"]:
                     handle = self.handle_items[handle_idx]
-                    # Skip the handle currently being dragged: Qt is already
-                    # moving it as part of the user's live mouse drag, so its
-                    # position here is already correct (this update loop is
-                    # itself triggered by that very handle's itemChange()).
-                    # Calling setPos() on it again re-enters itemChange() for
-                    # the same item while Qt's own mouse-grab/drag handling
-                    # for it is still on the call stack -- exactly the kind
-                    # of scene mutation reentrancy that Qt Graphics View
-                    # doesn't handle safely (this was the "adjusting points
-                    # freezes/crashes the app" bug). No blockSignals() needed
-                    # either way: QGraphicsEllipseItem isn't a QObject.
+                    # Do not move the handle being dragged: Qt is already
+                    # moving it, and calling setPos() on it here can freeze
+                    # or crash the app.
                     if not handle.is_dragging:
                         handle.setPos(kp[0], kp[1])
                     handle_idx += 1
@@ -321,17 +284,9 @@ class OverlayLayer:
         self.csvl_item.setLine(csvl_x, 0, csvl_x, height)
 
     def _render_cobb_overlays(self, detections, angle_pairs):
-        """Updates the Cobb measurement lines/labels. Reuses existing scene
-        items in place (setLine/setHtml) rather than destroying and
-        recreating them on every call. The pairing/count of curves never
-        changes from local keypoint edits (that's fixed by the server's
-        curve-detection pass), so a full destroy+recreate here was pure
-        waste on every single mouse-move tick of a drag -- and, worse, meant
-        mutating the scene's item list synchronously from inside another
-        item's itemChange() handler on every one of those ticks, which is
-        exactly the kind of reentrant scene mutation Qt Graphics View
-        doesn't handle safely (see the comment on the handle-skip in
-        render() -- same root cause, different symptom)."""
+        """Update the Cobb lines and labels in place. They are rebuilt only
+        when the number of curves changes: creating and deleting scene items
+        on every drag tick is unsafe in Qt and can freeze or crash the app."""
         scene = self.canvas.scene()
         expected_lines = len(angle_pairs) * 2
         expected_texts = len(angle_pairs)
@@ -353,12 +308,7 @@ class OverlayLayer:
             for _ in range(expected_texts):
                 txt = QGraphicsTextItem()
                 txt.setZValue(4)
-                # Keeps the label a constant, readable size on screen
-                # regardless of canvas zoom -- same fix as the landmark
-                # handles. Without this, a label's HTML font-size is in
-                # scene units like everything else, so on a large image
-                # that fits the view at a small scale, the label shrinks
-                # right along with it (reported as "abnormally small").
+                # Keep the label the same on-screen size at any zoom level.
                 txt.setFlag(QGraphicsTextItem.ItemIgnoresTransformations, True)
                 scene.addItem(txt)
                 self.cobb_texts.append(txt)
@@ -386,10 +336,8 @@ class OverlayLayer:
             p2_l = QPointF(l_kps[KP_BOTTOM_RIGHT][0], l_kps[KP_BOTTOM_RIGHT][1])
             self._set_extended_line(self.cobb_lines[idx * 2 + 1], p1_l, p2_l)
 
-            # The vertebrae spanned by *this* curve (not the whole spine --
-            # a lower/upper curve in a real S-shaped scoliosis case can
-            # bulge in opposite directions) define how far out the label
-            # needs to sit to clear the anatomy at that height.
+            # Horizontal extent of just the vertebrae in this curve, so the
+            # label can sit beside them.
             lo, hi = sorted((u_idx, l_idx))
             local_xs = [
                 kp[0]
@@ -416,27 +364,9 @@ class OverlayLayer:
         self._place_labels_without_overlap(pending_labels)
 
     def _place_labels_without_overlap(self, pending_labels, min_gap_px=10, hug_gap_px=16, edge_margin_px=6):
-        """Places each Cobb-angle label right next to its own curve, hugging
-        whichever side (left or right of that curve's vertebrae) has more
-        clear space in the viewport -- instead of either (a) a fixed scene-
-        unit offset from the spine, which only cleared the ribcage on the
-        narrow bundled demo image and landed right on top of the anatomy on
-        a wider clinical X-ray, or (b) a global left-margin anchor, which
-        keeps labels clear of anatomy but detaches them from the curve
-        they're describing.
-
-        For each curve, `local_min_x`/`local_max_x` are the scene-space
-        horizontal extent of just the vertebrae spanned by that curve (not
-        the whole spine -- an S-shaped curve's upper and lower segments can
-        bulge in opposite directions). Whichever side of that extent has
-        more room out to the viewport edge gets the label, hugging the
-        vertebra edge by a small fixed screen-pixel gap so it reads as
-        "attached to this curve" rather than floating. Labels are then
-        nudged down (per side) if they'd collide with the previous label
-        placed on that same side, and finally clamped to stay fully inside
-        the viewport as a fallback for extreme cases (e.g. a curve that
-        fills almost the entire image width).
-        """
+        """Place each Cobb label beside its own curve, on whichever side has
+        more free space in the viewport. Labels on the same side are pushed
+        down if they would overlap, then kept inside the viewport."""
         view = self.canvas
         viewport_w = view.viewport().width()
         last_bottom = {"left": None, "right": None}
@@ -458,9 +388,7 @@ class OverlayLayer:
                 side = "left"
                 x = left_edge_screen - hug_gap_px - label_w
 
-            # Fallback: if neither side actually had room (a curve spanning
-            # almost the full image width), keep the label on-screen rather
-            # than letting it run off the viewport edge.
+            # Keep the label on screen even if neither side has room.
             x = max(edge_margin_px, min(x, viewport_w - label_w - edge_margin_px))
 
             y = view.mapFromScene(QPointF(0.0, mid_y)).y()

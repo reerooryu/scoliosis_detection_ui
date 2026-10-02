@@ -1,17 +1,8 @@
-# Model validation / QA comparison dialog.
+# Model Validation dialog (Tools menu), for the ML team: compare a
+# prediction JSON against a ground-truth label JSON and report vertebra
+# count, per-vertebra tilt error, Cobb curve count and Cobb angle error.
 #
-# Lets the ML team compare a model prediction JSON (e.g. a saved API
-# response) against a ground-truth label JSON using the same
-# detections/keypoints/angle_pairs schema, and reports the checks outlined
-# by the team: vertebra count match, per-vertebra oblique-angle accuracy,
-# Cobb curve count match, Cobb angle accuracy, and a note on processing
-# time.
-#
-# This is a separate workflow from the clinical assessment in
-# modules/main_window.py -- it needs a ground-truth label a real patient
-# assessment never has, so it's its own dialog rather than folded into the
-# clinical canvas/panel. Native OS dialog styling (no clinical theme),
-# consistent with every other dialog in this app.
+# Separate from the clinical workflow, which never has a ground-truth label.
 
 import json
 import os
@@ -29,7 +20,7 @@ from modules.geometry import (
 
 
 def _load_json(path):
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -107,7 +98,15 @@ class ValidationDialog(QDialog):
                 "Load both a prediction and a ground-truth label file first."
             )
             return
-        self.results_txt.setPlainText(self._build_report())
+        try:
+            report = self._build_report()
+        except (AttributeError, KeyError, TypeError) as exc:
+            QMessageBox.critical(
+                self, "Compare Failed",
+                f"A file does not match the expected JSON layout: {exc}"
+            )
+            return
+        self.results_txt.setPlainText(report)
 
     def _build_report(self):
         pred_dets = self.prediction_data.get("detections", [])

@@ -1,42 +1,22 @@
-# Clinical geometry calculations that sit apart from I/O (modules/parser.py)
-# and Qt rendering (modules/overlay.py, modules/canvas.py) so they're plain,
-# unit-testable functions.
-#
-# Two families of functions live here:
-#   1. CSVL / apex vertebra -- used by the live clinical workspace
-#      (modules/main_window.py via ScoliosisModelEngine).
-#   2. Model validation / QA comparisons -- used by modules/validation.py
-#      to compare a prediction against a ground-truth label file. This is a
-#      different audience (ML team benchmarking the model) from the
-#      clinical workspace, which never has a ground-truth label at
-#      inference time for a real patient.
+# Clinical geometry: plain math with no Qt and no file or network access.
+#   1. Endplate tilt, Cobb angle, CSVL and apex -- used by the workspace.
+#   2. Prediction-vs-label comparisons -- used by the Model Validation tool.
 
 import math
 
 
 # ---------------------------------------------------------------------------
-# Oblique angle (per-vertebra endplate angle feeding into the Cobb angle)
+# Endplate tilt ("oblique angle") and Cobb angle
 # ---------------------------------------------------------------------------
 #
-# This is a direct port of cal_oblique01() in server.py -- the real model's
-# inference server -- NOT a generic atan2. It matters that these match
-# exactly: an earlier version of this app recomputed oblique angles locally
-# with math.atan2(dy, dx), which agrees with cal_oblique01 only when the
-# "left" keypoint's x-coordinate is less than the "right" keypoint's
-# (dx >= 0). Verified by exhaustive comparison across dx/dy combinations:
-# whenever a vertebra is rotated enough that the two keypoints' x-order
-# flips (dx < 0) -- plausible right at a curve's apex, exactly where an
-# accurate Cobb angle matters most -- atan2 and cal_oblique01 diverge by up
-# to 180 degrees. Keeping this in lockstep with server.py is required both
-# for the initial load (ScoliosisModelEngine.recalculate_all_metrics
-# overwrites the server's own oblique/cobb values using this function) and
-# for local recalculation after a clinician drags a keypoint in Edit Mode.
+# oblique_angle() must give exactly the same results as cal_oblique01() in
+# server.py. It is not a plain atan2: the two differ when the "left" corner
+# lies to the right of the "right" corner. The app recalculates every angle
+# with this function, so any difference would change the reported angles.
 
 def oblique_angle(p1, p2):
-    """Oblique angle in degrees between two endplate corner points, using
-    the same convention as server.py's cal_oblique01 (bounded roughly to
-    +/-90 degrees for a near-horizontal line, independent of which point is
-    labeled "left" vs "right")."""
+    """Endplate tilt in degrees from corner p1 (left) to corner p2 (right).
+    Same rules as cal_oblique01 in server.py."""
     x1_, y1_ = p1[0], p1[1]
     x2_, y2_ = p2[0], p2[1]
     x_x = x1_ - x2_
@@ -61,11 +41,10 @@ def oblique_angle(p1, p2):
 
 
 def cobb_angle_between_obliques(first_oblique, second_oblique):
-    """Return the acute Cobb angle between two endplate orientations.
+    """Cobb angle in degrees (0 to 90) between two endplate tilts.
 
-    Endplates are lines rather than directed vectors, so orientations that
-    differ by 180 degrees describe the same line.  Normalize that periodic
-    difference before choosing the smaller of the two intersecting angles.
+    An endplate is a line, not an arrow, so tilts 180 degrees apart are the
+    same line. The smaller of the two crossing angles is returned.
     """
     difference = abs(float(second_oblique) - float(first_oblique)) % 180.0
     return min(difference, 180.0 - difference)
@@ -75,26 +54,19 @@ def cobb_angle_between_obliques(first_oblique, second_oblique):
 # CSVL (Central Sacral Vertical Line) and apex vertebra
 # ---------------------------------------------------------------------------
 #
-# The backend JSON (see test_api_visualization.ipynb) doesn't label any
-# detection as "sacrum" -- there's a "class" field but checking actual
-# coordinates shows the one detection with class=1 sits near the TOP of the
-# spine, not the bottom, so it isn't a sacral marker. Absent an explicit
-# label, the bottommost detected vertebra (by vertical position) is used as
-# the CSVL reference instead -- anatomically the closest available proxy to
-# the sacral level. Deviations are reported in pixels: the JSON carries no
-# pixel-spacing/calibration field, so there's no way to convert to mm.
+# The server does not label the sacrum, so the lowest detected vertebra is
+# used as the CSVL reference. Deviations are in pixels: the result has no
+# pixel spacing, so they cannot be converted to mm.
 
 def bottommost_detection_index(detections):
-    """Index (list position) of the vertebra closest to the bottom of the
-    image, i.e. the largest keypoint-0 (center) y-coordinate."""
+    """List position of the lowest vertebra in the image (largest center y)."""
     if not detections:
         return None
     return max(range(len(detections)), key=lambda i: detections[i]["keypoints"][0][1])
 
 
 def compute_csvl_x(detections):
-    """X-coordinate of the CSVL reference line (center-x of the bottommost
-    detected vertebra)."""
+    """X position of the CSVL: the center x of the lowest vertebra."""
     idx = bottommost_detection_index(detections)
     if idx is None:
         return None
@@ -102,9 +74,8 @@ def compute_csvl_x(detections):
 
 
 def compute_apex(detections, csvl_x):
-    """Returns (apex_index, deviation_px). The apex vertebra is defined,
-    per standard scoliosis convention, as the vertebra whose center
-    deviates furthest horizontally from the CSVL."""
+    """Returns (apex_index, deviation_px): the vertebra whose center is
+    furthest sideways from the CSVL."""
     if not detections or csvl_x is None:
         return None, 0.0
     best_idx, best_dev = None, -1.0
@@ -120,9 +91,7 @@ def compute_apex(detections, csvl_x):
 # ---------------------------------------------------------------------------
 
 def compare_detection_counts(pred_detections, label_detections):
-    """1.1 -- does the model find the right number of vertebrae?
-    Fewer than label suggests an undertrained model / weak architecture;
-    more than label suggests overfitting / duplicated features."""
+    """Compare the number of vertebrae found against the label."""
     pred_n, label_n = len(pred_detections), len(label_detections)
     diff = pred_n - label_n
     if diff == 0:
@@ -135,9 +104,8 @@ def compare_detection_counts(pred_detections, label_detections):
 
 
 def compare_oblique_angles(pred_detections, label_detections):
-    """1.2 -- per-vertebra upper/lower oblique angle error, matched by list
-    index. These angles feed directly into the Cobb angle calculation, so
-    error here explains error downstream."""
+    """Upper and lower tilt error for each vertebra. Vertebrae are matched by
+    list position, so a missing or extra detection shifts every row after it."""
     n = min(len(pred_detections), len(label_detections))
     upper_errors, lower_errors = [], []
     rows = []
@@ -162,9 +130,7 @@ def compare_oblique_angles(pred_detections, label_detections):
 
 
 def compare_cobb_angle_counts(pred_pairs, label_pairs):
-    """2.1 (count) -- does the model find the right number of curves?
-    Fewer than label: model may be missing a curve. More than label:
-    possible overfitting."""
+    """Compare the number of Cobb curves found against the label."""
     pred_n, label_n = len(pred_pairs), len(label_pairs)
     diff = pred_n - label_n
     if diff == 0:
@@ -177,8 +143,7 @@ def compare_cobb_angle_counts(pred_pairs, label_pairs):
 
 
 def compare_cobb_angle_values(pred_pairs, label_pairs):
-    """2.1 (accuracy) -- how close are the predicted Cobb angle degrees to
-    the label, curve by curve."""
+    """Cobb angle error for each curve, matched by list position."""
     n = min(len(pred_pairs), len(label_pairs))
     rows, errors = [], []
     for i in range(n):

@@ -1,24 +1,11 @@
-# Main application window: single-page clinical workspace.
+# Main window: the native menu bar, the themed toolbar, and a stack that
+# switches between the Load page and the Workspace page.
 #
-# Owns the toolbar (custom clinical theme) and the native menu bar
-# (File/Edit/View/Tools), and swaps between the Load page (image import)
-# and the Workspace page (canvas + measurement panel) via a QStackedWidget.
-#
-# The actual workflow logic -- submit/retry/reset, the background inference
-# request lifecycle, landmark-edit operations (drag/undo/redo/reset edits),
-# and project save/open (modules/project.py) -- lives in
-# modules/controller.py:AnalysisController, driving an
-# modules/session.py:AnalysisSession. This window's job is composition root,
-# navigation, and dialog factory: it builds the menu/toolbar/pages, wires
-# widget signals to controller methods, and binds session/controller signals
-# to widget updates, rather than manually refreshing every widget itself
-# after each operation. See AGENTS.md for the full rationale.
-#
-# Tools > Model Validation opens a separate, unrelated workflow
-# (modules/validation.py) for comparing a model prediction against a
-# ground-truth label file -- that's an ML-team QA task, not something a
-# clinician does per-patient, so it's deliberately kept out of this
-# window's own state.
+# The workflow itself (inference, edits, project save/open) lives in
+# AnalysisController (modules/controller.py), which updates an
+# AnalysisSession (modules/session.py). This window builds the widgets,
+# passes user actions to the controller, and refreshes itself from the
+# session's and controller's signals.
 
 import os
 
@@ -77,9 +64,7 @@ class WorkspacePage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # See LoadPage.__init__ for why this is needed: a plain QWidget
-        # embedded as a non-top-level child won't paint its stylesheet
-        # background on its own.
+        # Needed for the stylesheet background to paint (see LoadPage).
         self.setAttribute(Qt.WA_StyledBackground, True)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -126,9 +111,7 @@ class WorkspacePage(QWidget):
         self.export_btn.setToolTip("Available once AI analysis results are loaded")
         panel_layout.addWidget(self.export_btn)
 
-        # Full workflow reset lives here, below Export, rather than in the
-        # toolbar -- the toolbar instead has "Reset Edits" (undo manual
-        # keypoint adjustments only, keeping the loaded image/analysis).
+        # Full Reset lives here; the toolbar has "Reset Edits" instead.
         self.reset_btn = QPushButton("Reset")
         self.reset_btn.setToolTip("Clear the loaded image and analysis, and return to the start")
         panel_layout.addWidget(self.reset_btn)
@@ -178,14 +161,12 @@ class MainWindow(QMainWindow):
             parent=self,
         )
 
-        # Session state -> widget bindings. The window never manually
-        # refreshes a widget mid-operation; it only reacts to these.
+        # Session signals -> widget updates.
         self.session.state_changed.connect(self._on_state_changed)
         self.session.metrics_changed.connect(self._on_metrics_changed)
         self.session.edit_state_changed.connect(self._on_edit_state_changed)
 
-        # Controller -> window bindings (status text, dialogs, the one
-        # metric -- processing time -- that isn't part of persistent state).
+        # Controller signals -> status text, error dialogs, processing time.
         self.controller.status_message.connect(self.statusBar().showMessage)
         self.controller.error_dialog.connect(self._on_error_dialog)
         self.controller.analysis_completed.connect(self._on_analysis_completed)
@@ -224,11 +205,8 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        # Save Project persists progress on an in-progress assessment (image
-        # + current + baseline detections) so it can be resumed later without
-        # re-running AI inference -- distinct from Export Results below,
-        # which is a one-way clinical deliverable, not something you reopen
-        # and keep editing. See modules/project.py.
+        # A saved project can be reopened and edited later; Export (below)
+        # is a one-way output.
         self.save_project_action = QAction("&Save Project", self)
         self.save_project_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
         self.save_project_action.setEnabled(False)
@@ -332,9 +310,7 @@ class MainWindow(QMainWindow):
 
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        # Without this, the spacer picks up the theme's generic QWidget
-        # background rule (a shade darker than the toolbar itself) and
-        # renders as a visible empty bar instead of blending in.
+        # Transparent, or the spacer shows as a darker bar in the toolbar.
         spacer.setStyleSheet("background: transparent;")
         self.toolbar.addWidget(spacer)
 
@@ -359,19 +335,19 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_open_image(self):
-        """File -> Open Image: shows the Load page and opens its file picker,
-        so the same validation/preview/Submit flow always applies."""
+        """File -> Open Image: show the Load page and open its file picker."""
         if not self._confirm_discard_if_dirty("loading a new image"):
             return
+        previous_page = self.stack.currentWidget()
         self.stack.setCurrentWidget(self.load_page)
-        self.load_page.drop_zone._on_browse()
+        staged = self.load_page.drop_zone._on_browse()
+        if not staged and self.stack.currentWidget() is self.load_page:
+            # Nothing was picked: go back, so a loaded assessment stays visible.
+            self.stack.setCurrentWidget(previous_page)
 
     def _on_submit(self, image_path):
-        """The controller clears the overlay and cancels any outstanding
-        request as part of submit() -- that must happen before
-        canvas.load_image() below, since ImageCanvas.load_image() calls
-        scene.clear(), which deletes the overlay's C++ items out from under
-        any still-tracked Python references."""
+        """controller.submit() must run before canvas.load_image(): it clears
+        the overlay, and load_image() then wipes the scene."""
         self.controller.submit(image_path)
 
         pixmap = QPixmap(image_path)
@@ -508,10 +484,8 @@ class MainWindow(QMainWindow):
         self._open_project_path(path)
 
     def _on_load_page_project_opened(self, path):
-        """A .sdproj dropped or browsed to from the Load page (DropZone
-        accepts both images and project files -- see modules/load_view.py)
-        goes through the exact same open-project flow as File -> Open
-        Project, just without its own file dialog."""
+        """A .sdproj dropped or browsed to on the Load page opens the same
+        way as File -> Open Project."""
         if not self._confirm_discard_if_dirty("opening a different project"):
             return
         self._open_project_path(path)
@@ -519,17 +493,10 @@ class MainWindow(QMainWindow):
     def _open_project_path(self, path):
         if self.controller.open_project(path):
             self.stack.setCurrentWidget(self.workspace_page)
-            # If the workspace page has never been shown before in this run
-            # of the app, its canvas won't have a settled viewport size the
-            # instant setCurrentWidget() returns -- and ImageCanvas itself
-            # already accounts for this for the base image (see its own
-            # showEvent/_delayed_initial_fit, on a 100ms timer). The
-            # overlay's Cobb-label placement depends on that same settled
-            # viewport, so render it just after ImageCanvas's own delayed
-            # re-fit would have fired, rather than synchronously right now
-            # (see AnalysisController.open_project()'s docstring for why
-            # the Submit flow never needs this: its network round-trip
-            # already provides the delay for free).
+            # No inference ran, so clear any time left from an earlier analysis.
+            self.workspace_page.metrics["Processing Time"].set_value("-")
+            # Draw the overlay once the page is visible and laid out; label
+            # placement needs the final viewport size.
             QTimer.singleShot(150, self.controller.finish_open_project)
 
     def _on_save_project(self):
@@ -557,11 +524,8 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _confirm_discard_if_dirty(self, action_description):
-        """Asks before throwing away landmark adjustments that haven't been
-        exported or saved to a project yet. Returns True if it's OK to
-        proceed. session.dirty and session.project_dirty are independent
-        (you can export without saving a project, or save a project without
-        exporting), so either one being set means there's something to lose."""
+        """Ask before discarding edits that are neither exported nor saved
+        to a project. Returns True if it is OK to proceed."""
         if not (self.session.dirty or self.session.project_dirty):
             return True
         reply = QMessageBox.question(
@@ -573,8 +537,8 @@ class MainWindow(QMainWindow):
         return reply == QMessageBox.Yes
 
     def closeEvent(self, event):
-        """Guards against closing the window with unexported and/or
-        unsaved-to-project landmark adjustments still pending."""
+        """Block closing while a request is running, and confirm before
+        discarding unsaved edits."""
         if self.controller.has_pending_jobs():
             QMessageBox.information(
                 self,

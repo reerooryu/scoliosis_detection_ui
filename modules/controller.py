@@ -1,20 +1,10 @@
-# AnalysisController: the workflow/use-case layer for one clinical
-# assessment -- submit / retry / reset, the background inference-request
-# lifecycle, landmark-edit operations (drag / undo / redo / reset edits),
-# and project save/open (modules/project.py) so a clinician can resume an
-# in-progress assessment later without re-running AI inference. This used
-# to all live directly on MainWindow, alongside its menu/toolbar/dialog
-# construction; it's pulled out here so MainWindow can go back to just
-# being a composition root + navigation owner + dialog factory, and bind
-# its widgets to signals instead of being handed explicit "go refresh
-# yourself now" calls after every operation. See AGENTS.md.
+# AnalysisController: the workflow for one assessment -- submit / retry /
+# reset, the background inference request, landmark edits (drag / undo /
+# redo / reset edits) and project save / open.
 #
-# This controller mutates an AnalysisSession (modules/session.py) and drives
-# an OverlayLayer (modules/overlay.py) directly -- the overlay is really "the
-# view of the model," not a plain widget the window can bind generically, so
-# it's reasonable for the use-case layer to push updates to it directly.
-# Everything the window itself needs (status text, error dialogs, the
-# "processing time" figure) comes back out through signals below.
+# It changes an AnalysisSession (modules/session.py) and redraws the
+# OverlayLayer (modules/overlay.py). Anything MainWindow needs to show
+# (status text, error dialogs, processing time) is sent out as a signal.
 
 import logging
 import os
@@ -23,19 +13,17 @@ from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtGui import QPixmap
 
 from modules.model_mock import ScoliosisModelEngine
-from modules.parser import InferenceWorker
+from modules.parser import InferenceWorker, validate_inference_payload
 from modules.project import write_project, read_project, ProjectLoadError
 
 logger = logging.getLogger(__name__)
 
 
 class AnalysisController(QObject):
-    """Orchestrates one AnalysisSession + OverlayLayer pair.
+    """Runs the workflow for one AnalysisSession + OverlayLayer pair.
 
-    api_url_provider is a zero-arg callable (SettingsDialog.get_saved_api_url)
-    rather than a captured value, so each request picks up whatever's
-    currently saved in Settings without the controller needing to be told
-    about settings changes.
+    api_url_provider is a function, not a fixed value, so each request uses
+    the URL currently saved in Settings.
     """
 
     status_message = Signal(str)
@@ -52,8 +40,10 @@ class AnalysisController(QObject):
 
         self._next_request_id = 0
         self._active_request_id = None
-        # Request ID -> (QThread, InferenceWorker). Keeping both references
-        # until QThread.finished prevents premature Python/C++ destruction.
+        # True while a request's result is still awaited.
+        self._busy = False
+        # request_id -> (QThread, InferenceWorker). Both are held until the
+        # thread finishes so Qt does not delete them too early.
         self._inference_jobs = {}
 
     # ------------------------------------------------------------------
@@ -61,11 +51,9 @@ class AnalysisController(QObject):
     # ------------------------------------------------------------------
 
     def submit(self, image_path):
-        """Starts a fresh analysis for a newly loaded image. Cancels any
-        outstanding request and clears the overlay before the caller loads
-        the new pixmap into the canvas -- ImageCanvas.load_image() calls
-        scene.clear(), which deletes the overlay's C++ items, so tracked
-        Python references need to be dropped first."""
+        """Start a fresh analysis for a newly loaded image. The overlay is
+        cleared first: the caller's canvas.load_image() wipes the scene, and
+        the overlay must not keep references to the deleted items."""
         self._cancel_inference_jobs()
         self.overlay_layer.clear()
         self.session.start_loading(image_path)
@@ -73,15 +61,21 @@ class AnalysisController(QObject):
         self._run_inference(image_path)
 
     def retry(self):
-        if self.session.image_path:
-            self.status_message.emit("Retrying AI analysis…")
-            self._run_inference(self.session.image_path)
+        if not self.session.image_path:
+            return
+        if self._busy:
+            # Do not stack duplicate requests on the server.
+            self.status_message.emit("AI analysis is already running…")
+            return
+        self.status_message.emit("Retrying AI analysis…")
+        self._run_inference(self.session.image_path)
 
     def _run_inference(self, image_path):
         api_url = self._api_url_provider()
         self._next_request_id += 1
         request_id = self._next_request_id
         self._active_request_id = request_id
+        self._busy = True
         self.busy_changed.emit(True)
 
         thread = QThread(self)
@@ -92,8 +86,8 @@ class AnalysisController(QObject):
         thread.started.connect(worker.run)
         worker.succeeded.connect(self._on_inference_succeeded)
         worker.failed.connect(self._on_inference_failed)
-        # The worker emits finished after either outcome. The standard Qt
-        # lifecycle chain then stops and deletes both C++ objects safely.
+        # finished fires after success or failure; Qt then stops the thread
+        # and deletes both objects.
         worker.finished.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
@@ -105,14 +99,17 @@ class AnalysisController(QObject):
     def _on_inference_succeeded(self, request_id, data, elapsed):
         if request_id != self._active_request_id:
             return  # stale result from a superseded request (e.g. after Reset)
+        self._busy = False
         self.busy_changed.emit(False)
 
-        pixmap = QPixmap(self.session.image_path)
         model_engine = ScoliosisModelEngine(autoload=False)
         model_engine.load_from_dict(data)
-        model_engine.scale_coordinates(pixmap.width(), pixmap.height())
-        # Capture the AI's original result *after* scaling, so "Reset Edits"
-        # restores coordinates in the same space the canvas actually displays.
+        # Match the result to the displayed image size. Skip this if the file
+        # can no longer be read: a 0x0 size would move every landmark to (0, 0).
+        pixmap = QPixmap(self.session.image_path)
+        if not pixmap.isNull():
+            model_engine.scale_coordinates(pixmap.width(), pixmap.height())
+        # Take the "Reset Edits" baseline after scaling, not before.
         model_engine.capture_baseline()
 
         self.session.set_result(model_engine)
@@ -127,6 +124,7 @@ class AnalysisController(QObject):
     def _on_inference_failed(self, request_id, message):
         if request_id != self._active_request_id:
             return
+        self._busy = False
         self.busy_changed.emit(False)
         self.session.set_error()
         self.status_message.emit("AI analysis unavailable — showing image only.")
@@ -143,13 +141,11 @@ class AnalysisController(QObject):
         self._inference_jobs.pop(request_id, None)
 
     def _cancel_inference_jobs(self):
-        """Invalidate every outstanding request without destroying threads.
-
-        ``requests`` has no safe cross-thread abort API, so a running HTTP
-        call is allowed to reach its configured timeout. Its worker then
-        exits normally and the lifecycle connections above clean it up.
-        """
+        """Mark every outstanding request as stale. A running HTTP call
+        cannot be aborted, so it runs to its timeout and its result is
+        ignored."""
         self._active_request_id = None
+        self._busy = False
         for _thread, worker in self._inference_jobs.values():
             worker.cancel()
 
@@ -161,25 +157,17 @@ class AnalysisController(QObject):
     # ------------------------------------------------------------------
 
     def on_drag_started(self, det_idx, kp_idx):
-        """Fired once per drag gesture (mouse press on a handle) -- this is
-        the undo checkpoint, capturing the state right before this specific
-        adjustment begins."""
+        """Mouse press on a handle: save one undo step before the change."""
         self.session.snapshot_for_undo()
 
     def on_keypoint_dragged(self, det_idx, kp_idx, x, y):
-        """Fired continuously while a handle is being dragged (every
-        mouse-move tick). See OverlayLayer.render()/_render_cobb_overlays()
-        for why this doesn't tear down and rebuild the whole overlay on
-        every tick."""
+        """Every mouse-move tick of a drag: update the model and redraw."""
         self.session.apply_keypoint_drag(det_idx, kp_idx, x, y)
         if self.session.model_engine is not None:
             self.overlay_layer.render(self.session.model_engine)
 
     def on_drag_finished(self, det_idx, kp_idx):
-        """Fired once per drag gesture (mouse release). The live updates
-        during the drag already kept everything consistent, but has_edits()
-        is computed lazily from the model and nothing else re-checks it
-        mid-drag, so this is the point to refresh it."""
+        """Mouse release: refresh the undo/redo/"has edits" state."""
         self.session.refresh_edit_state()
 
     def undo(self):
@@ -214,14 +202,12 @@ class AnalysisController(QObject):
         self.status_message.emit("Load a spine X-ray image to begin.")
 
     # ------------------------------------------------------------------
-    # Project save / open (modules/project.py) -- resuming an in-progress
-    # assessment later, without re-running AI inference.
+    # Project save / open (modules/project.py)
     # ------------------------------------------------------------------
 
     def save_project(self, project_path):
-        """Writes the current session + model_engine state to project_path.
-        Returns True on success; emits error_dialog and returns False on
-        failure (nothing in the session changes in that case)."""
+        """Save the session to project_path. Returns True on success; on
+        failure shows an error and leaves the session unchanged."""
         if self.session.model_engine is None:
             return False
 
@@ -230,10 +216,8 @@ class AnalysisController(QObject):
         original_filename = self.session.original_filename
 
         if image_bytes is None:
-            # A session from a fresh Submit only has a live file path until
-            # the first save -- read and cache the bytes here so every
-            # subsequent save (and any save after the original file might
-            # move or be deleted) no longer depends on that on-disk path.
+            # First save after a fresh Submit: read the image once and keep
+            # it in memory, so later saves do not need the original file.
             try:
                 with open(self.session.image_path, "rb") as f:
                     image_bytes = f.read()
@@ -262,35 +246,29 @@ class AnalysisController(QObject):
         return True
 
     def open_project(self, project_path):
-        """Loads a previously-saved .sdproj bundle: decodes the embedded
-        image, restores the model engine's current + baseline data, and
-        loads the image into the canvas -- all without contacting the
-        inference backend. Returns True on success; emits error_dialog and
-        returns False on failure (nothing in the session changes in that
-        case).
+        """Open a saved .sdproj without contacting the server. Returns True
+        on success; on failure shows an error and leaves the session unchanged.
 
-        Deliberately does NOT render the overlay yet -- see
-        finish_open_project(). OverlayLayer's Cobb-label placement maps
-        scene coordinates to screen coordinates using the canvas's current
-        viewport size/transform, which is only correct once the canvas has
-        actually been shown and Qt has finished laying it out. In the
-        Submit flow this is never a problem by accident: the overlay isn't
-        rendered until the AI result comes back over the network, and that
-        round-trip is more than enough time for the canvas (already loaded
-        with the raw image, and about to be switched into view) to settle.
-        open_project() has no such gap -- if the workspace page has never
-        been shown yet in this run of the app, rendering synchronously here
-        would compute label positions against a stale/unsettled viewport
-        and place them "way off" the image (only self-correcting the next
-        time the page is shown, once its geometry is already settled).
-        MainWindow.open_project() calls finish_open_project() only after
-        switching to the workspace page and letting Qt process the
-        resulting show/resize events.
+        The overlay is not drawn here. Label placement needs the canvas to
+        be visible and laid out, so MainWindow calls finish_open_project()
+        shortly after switching to the workspace page.
         """
         try:
             image_bytes, image_ext, model_data, baseline_data, metadata = read_project(project_path)
         except ProjectLoadError as exc:
             self.error_dialog.emit("Could Not Open Project", str(exc))
+            return False
+
+        # Same checks as a fresh server result, so a damaged or hand-edited
+        # project fails here with a message instead of part-way through loading.
+        try:
+            validate_inference_payload(model_data)
+            validate_inference_payload(baseline_data)
+        except ValueError as exc:
+            self.error_dialog.emit(
+                "Could Not Open Project",
+                f"The project's detection data is not valid: {exc}"
+            )
             return False
 
         pixmap = QPixmap()
@@ -307,10 +285,7 @@ class AnalysisController(QObject):
 
         self._cancel_inference_jobs()
 
-        # Clear the overlay before the canvas swaps images, same ordering
-        # requirement as submit(): ImageCanvas.load_image() calls
-        # scene.clear(), which deletes the overlay's C++ items out from
-        # under any still-tracked Python references.
+        # Clear the overlay before the canvas wipes its scene (same as submit()).
         self.overlay_layer.clear()
         self.overlay_layer.canvas.load_image(pixmap)
 
@@ -326,9 +301,7 @@ class AnalysisController(QObject):
         return True
 
     def finish_open_project(self):
-        """Renders the overlay for a project loaded by open_project(), once
-        the caller (MainWindow) has made the workspace page visible and let
-        Qt settle its layout. No-op if nothing is loaded (e.g. the user hit
-        Full Reset in the brief window before this was called)."""
+        """Draw the overlay for a project loaded by open_project(). Does
+        nothing if the session was reset in the meantime."""
         if self.session.model_engine is not None:
             self.overlay_layer.render(self.session.model_engine)

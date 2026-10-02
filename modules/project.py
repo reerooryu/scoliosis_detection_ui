@@ -1,31 +1,17 @@
-# Project save/load: a self-contained ".sdproj" bundle that lets a clinician
-# save progress on one in-progress assessment and resume it later --
-# including any manual landmark edits -- without re-running AI inference.
+# Project files: a ".sdproj" lets a clinician save an assessment, including
+# manual edits, and reopen it later without re-running the AI.
 #
-# A project file is a zip archive (the same trick .docx/.pptx use) so an
-# image, JSON data, and metadata can sit side-by-side without inventing a
-# custom binary format:
-#
-#   project.json        -- schema version + timestamp + original filename
-#   image.<ext>          -- a copy of the source X-ray, embedded (not just a
-#                            path reference -- so a project stays fully
-#                            self-contained even if the original file is
-#                            later moved, renamed, or deleted, or the
-#                            project is opened on a different machine)
-#   model_data.json      -- the current (possibly edited) detections /
-#                            keypoints / angles, i.e. ScoliosisModelEngine's
-#                            live data (get_raw_data())
-#   baseline_data.json   -- the AI's original, unedited result, so "Reset
-#                            Edits" still works correctly after reopening
-#
-# Opening a project never talks to the inference backend -- everything
-# needed to redraw the canvas and measurement panel already lives in the
-# file. modules/controller.py:AnalysisController is the only thing that
-# calls into this module; see its save_project()/open_project().
+# It is a zip archive containing:
+#   project.json        schema version, timestamp, original file name
+#   image.<ext>         a copy of the X-ray, so the project still opens if
+#                       the original file is moved or deleted
+#   model_data.json     the current (possibly edited) result
+#   baseline_data.json  the AI's original result, for "Reset Edits"
 
 import json
 import os
 import zipfile
+import zlib
 from datetime import datetime, timezone
 
 PROJECT_EXTENSION = ".sdproj"
@@ -37,19 +23,16 @@ _BASELINE_DATA_ENTRY = "baseline_data.json"
 
 
 class ProjectLoadError(Exception):
-    """Raised when a .sdproj file is missing, not a zip, or has an
-    unsupported/corrupt schema -- callers should catch this the same way
-    modules/parser.py's BackendUnavailableError is handled (surfaced as a
-    clinician-readable message, never a raw traceback)."""
+    """A .sdproj file is missing, not a zip, or corrupt. The message is
+    written to be shown to the user."""
 
 
 def write_project(model_engine, image_bytes, image_ext, original_filename, project_path):
-    """Writes model_engine's current + baseline data, plus a copy of the
-    source image, to project_path (a .sdproj zip bundle).
+    """Write the current result, the AI baseline and a copy of the image to
+    project_path.
 
-    Raises ValueError if model_engine has no captured baseline yet (nothing
-    resembling a completed assessment to save), or OSError if the file can't
-    be written.
+    Raises ValueError if no AI result is loaded, or OSError if the file
+    cannot be written.
     """
     if not model_engine.has_baseline():
         raise ValueError("Cannot save a project before an AI result has been loaded.")
@@ -65,10 +48,8 @@ def write_project(model_engine, image_bytes, image_ext, original_filename, proje
     }
     image_ext = image_ext if image_ext.startswith(".") else f".{image_ext}"
 
-    # Write to a temporary path and replace atomically -- an interrupted
-    # write (crash, full disk) should never leave a half-written zip sitting
-    # at the destination the user picked, especially when that destination
-    # is an existing project file being overwritten by a routine save.
+    # Write to a temp file, then swap it in, so a failed save never leaves a
+    # half-written project behind.
     tmp_path = project_path + ".tmp"
     try:
         with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -83,11 +64,10 @@ def write_project(model_engine, image_bytes, image_ext, original_filename, proje
 
 
 def read_project(project_path):
-    """Reads a .sdproj bundle back into
+    """Read a .sdproj. Returns
     (image_bytes, image_ext, model_data, baseline_data, metadata).
 
-    Raises ProjectLoadError with a clinician-readable message if the file is
-    missing, isn't a zip, or is missing/has mismatched required entries.
+    Raises ProjectLoadError with a readable message if the file is not valid.
     """
     if not os.path.exists(project_path):
         raise ProjectLoadError(f"Project file not found: {project_path}")
@@ -99,6 +79,8 @@ def read_project(project_path):
             if _METADATA_ENTRY not in names:
                 raise ProjectLoadError("Not a valid project file (missing project.json).")
             metadata = json.loads(zf.read(_METADATA_ENTRY))
+            if not isinstance(metadata, dict):
+                raise ProjectLoadError("Not a valid project file (unreadable project.json).")
 
             version = metadata.get("schema_version")
             if version != SCHEMA_VERSION:
@@ -119,7 +101,9 @@ def read_project(project_path):
             baseline_data = json.loads(zf.read(_BASELINE_DATA_ENTRY))
     except zipfile.BadZipFile as exc:
         raise ProjectLoadError("Not a valid project file (not a recognized archive).") from exc
-    except (json.JSONDecodeError, KeyError) as exc:
+    except (ValueError, KeyError, zlib.error) as exc:
         raise ProjectLoadError(f"Project file is corrupt or unreadable: {exc}") from exc
+    except OSError as exc:
+        raise ProjectLoadError(f"Could not read the project file: {exc}") from exc
 
     return image_bytes, image_ext, model_data, baseline_data, metadata
