@@ -145,7 +145,9 @@ class AnalysisController(QObject):
         cannot be aborted, so it runs to its timeout and its result is
         ignored."""
         self._active_request_id = None
-        self._busy = False
+        if self._busy:
+            self._busy = False
+            self.busy_changed.emit(False)
         for _thread, worker in self._inference_jobs.values():
             worker.cancel()
 

@@ -117,6 +117,16 @@ QStatusBar {{
     color: {TEXT_MUTED};
     border-top: 1px solid {BORDER};
 }}
+
+QProgressBar {{
+    background-color: {BG_PANEL_RAISED};
+    border: 1px solid {BORDER};
+    border-radius: 3px;
+}}
+QProgressBar::chunk {{
+    background-color: {ACCENT};
+    border-radius: 2px;
+}}
 """
 
 
