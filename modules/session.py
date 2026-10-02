@@ -1,27 +1,17 @@
-# AnalysisSession: the per-loaded-image clinical state, separated out of
-# MainWindow so the window can bind to signals instead of being told to
-# manually refresh every widget after every operation.
-#
-# This holds *state* only -- it knows nothing about Qt widgets, threads, or
-# the inference HTTP call. modules/controller.py:AnalysisController is the
-# only thing that mutates a session; modules/main_window.py just listens.
-# See AGENTS.md for the full rationale behind this split.
+# AnalysisSession: the state for one loaded image. No widgets, no threads
+# and no HTTP. Only AnalysisController (modules/controller.py) changes it;
+# MainWindow just listens to its signals.
 
 from PySide6.QtCore import QObject, Signal
 
 
 class AnalysisSession(QObject):
-    """Holds the state for one loaded image: its path, the AI result (if
-    any), and whether it has unexported manual edits.
+    """State for one loaded image: its source, the AI result, and whether
+    there are unexported or unsaved edits.
 
-    Three separate signals rather than one generic "changed", since most
-    listeners only care about one of these -- e.g. the toolbar's undo/redo
-    buttons don't need to re-check on every keypoint-drag tick, only when
-    undo/redo availability itself actually changes:
-
-      state_changed(str)   -- lifecycle: one of the STATE_* constants below
-      metrics_changed()    -- the measurement panel should re-read model_engine
-      edit_state_changed() -- undo/redo/"has edits" availability may differ
+      state_changed(str)   -- one of the STATE_* values below
+      metrics_changed()    -- the measurement panel should refresh
+      edit_state_changed() -- undo/redo/"has edits" may have changed
     """
 
     state_changed = Signal(str)
@@ -36,12 +26,8 @@ class AnalysisSession(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.image_path = None
-        # Raw source-image bytes, ext, and original basename -- kept in
-        # memory (not just referenced by image_path) so Save Project never
-        # depends on the original file still existing on disk. Populated
-        # either lazily on first save (from a live Submit) or immediately
-        # on opening a project (see AnalysisController.save_project() /
-        # open_project()).
+        # The source image is kept in memory so Save Project still works if
+        # the original file is moved or deleted.
         self.image_bytes = None
         self.image_ext = None
         self.original_filename = None
@@ -89,9 +75,8 @@ class AnalysisSession(QObject):
         self.edit_state_changed.emit()
 
     def set_project_loaded(self, model_engine, image_bytes, image_ext, original_filename, project_path):
-        """Like set_result(), but for reopening a saved project: also seeds
-        project_path so subsequent "Save Project" (not "Save Project As...")
-        writes back to the same file, and marks it not-yet-re-modified."""
+        """Like set_result(), for a reopened project: remembers the project
+        path so "Save Project" writes back to the same file."""
         self.image_path = None
         self.project_path = project_path
         self.project_dirty = False
@@ -117,9 +102,8 @@ class AnalysisSession(QObject):
         self.edit_state_changed.emit()
 
     # ------------------------------------------------------------------
-    # Landmark edits (undo/redo/reset delegate to ScoliosisModelEngine,
-    # which owns the actual history stacks -- this just keeps `dirty` and
-    # the signal emissions in sync with it)
+    # Landmark edits. The model engine owns the undo history; these keep
+    # the dirty flags and signals in step with it.
     # ------------------------------------------------------------------
 
     def apply_keypoint_drag(self, det_idx, kp_idx, x, y):
@@ -137,10 +121,8 @@ class AnalysisSession(QObject):
         self.edit_state_changed.emit()
 
     def refresh_edit_state(self):
-        """Re-emit edit_state_changed without altering anything -- used once
-        a drag gesture ends, to catch has_edits() becoming true partway
-        through (it's computed lazily from the model, so nothing else
-        re-checks it mid-drag)."""
+        """Re-emit edit_state_changed. Called when a drag ends, because
+        nothing re-checks has_edits() during the drag."""
         self.edit_state_changed.emit()
 
     def undo(self):

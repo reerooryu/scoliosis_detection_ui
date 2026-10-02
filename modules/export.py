@@ -1,11 +1,5 @@
-# Multi-format clinical export.
-#
-# Only Raw JSON is wired up today -- it delegates to the already-tested
-# modules/utils.export_json_data. Annotated Image, PDF Report, and CSV are
-# shown in the modal as "coming soon" so the intended end-state UX is
-# visible now, but they aren't implemented: they need format-specific
-# renderers (drawing the overlay onto the image, laying out a PDF page,
-# flattening keypoints to rows) that don't exist yet.
+# Export dialog. Only Raw JSON works today; Annotated Image, PDF Report and
+# CSV are shown disabled as "coming soon".
 
 import os
 from datetime import datetime
@@ -20,11 +14,7 @@ from modules.settings_dialog import SettingsDialog
 
 
 class ExportDialog(QDialog):
-    """Format checkboxes + destination folder + Cancel/Export.
-
-    Matches the planned Export modal shape; only the Raw JSON checkbox is
-    actually functional right now.
-    """
+    """Choose export formats and a destination folder."""
 
     def __init__(self, model_engine, parent=None):
         super().__init__(parent)

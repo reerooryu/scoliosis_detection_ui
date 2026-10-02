@@ -242,3 +242,10 @@ blueprint.md
 # (Already ignored above, next to share/python-wheels/, as part of the
 # packaging-artifacts section -- listed here too as a pointer, since it
 # belongs in this "in-house / not for the repo" category as well.)
+
+# macOS Finder metadata
+.DS_Store
+
+# Saved projects and exported results can contain patient X-rays and data
+*.sdproj
+scoliosis_assessment_*.json

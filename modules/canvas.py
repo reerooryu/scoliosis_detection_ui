@@ -1,11 +1,6 @@
-# Pure image-display canvas built on the Qt Graphics View Framework.
-#
-# Renders the original X-ray as a single base-layer QGraphicsPixmapItem.
-# This module intentionally has no knowledge of AI predictions or
-# measurement overlays -- those are layered on top by modules/overlay.py
-# once the landmark / Cobb-angle editing features are built. Keeping the
-# base viewer separate means the original pixel data is never touched by
-# anything drawn on top of it.
+# Image viewer for the X-ray: pan, zoom and fit-to-view. It knows nothing
+# about AI results. modules/overlay.py draws those as separate items on top,
+# so the original pixels are never changed.
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPainter
@@ -30,10 +25,8 @@ class ImageCanvas(QGraphicsView):
 
         self.image_item = None
         self.zoom_factor = 1.0
-        # True until the user manually zooms/wheels; while True, any resize
-        # (including the initial show) keeps re-fitting the image. Once the
-        # user zooms in/out, resizes must stop overriding their chosen zoom
-        # level -- see resizeEvent for why this matters.
+        # While True, resizing the window re-fits the image. Set to False
+        # once the user zooms, so a resize does not undo their zoom.
         self._auto_fit = True
 
     def load_image(self, pixmap):
@@ -73,13 +66,9 @@ class ImageCanvas(QGraphicsView):
             super().wheelEvent(event)
 
     def resizeEvent(self, event):
-        """Keeps the image fitted to the viewport on resize -- but only until
-        the user has manually zoomed. Without the _auto_fit guard, zooming in
-        past the viewport's size makes scrollbars appear, which shrinks the
-        viewport and fires a resizeEvent right back into fit_in_view(),
-        silently snapping the zoom back to fit level on every zoom-in click
-        past that point (this was reported as "zoom in doesn't work past the
-        image's fit size")."""
+        """Re-fit on resize until the user zooms. Without the _auto_fit check,
+        the scrollbars that appear on zoom-in trigger a resize that snaps the
+        zoom straight back."""
         super().resizeEvent(event)
         if self._auto_fit:
             self.fit_in_view()
@@ -92,11 +81,7 @@ class ImageCanvas(QGraphicsView):
             QTimer.singleShot(100, self._delayed_initial_fit)
 
     def _delayed_initial_fit(self):
-        """One-time catch-up fit ~100ms after first show, in case the
-        window's real on-screen size wasn't settled yet at showEvent time.
-        Re-checks _auto_fit at fire time rather than just when it was
-        scheduled: if the user manually zoomed in during that window, this
-        would otherwise silently snap their zoom back to fit a moment
-        later."""
+        """Fit once more shortly after the first show, in case the window
+        size was not final yet. Skipped if the user has already zoomed."""
         if self._auto_fit:
             self.fit_in_view()

@@ -1,8 +1,5 @@
-# Settings dialog: inference API URL, default overlay line color, and
-# default export folder. Preferences are persisted with QSettings so they
-# survive app restarts, and are read by modules/main_window.py (API URL),
-# modules/overlay.py (line color, once wired in), and the Export modal
-# (export folder).
+# Settings dialog: inference API URL, Cobb line color and default export
+# folder. Saved with QSettings, so they survive restarts.
 
 import os
 
@@ -20,14 +17,10 @@ ORG_NAME = "ScoliosisSuite"
 APP_KEY = "DetectionUI"
 DEFAULT_LINE_COLOR = "#ff5722"
 
-# --- Language switch: disabled until Thai translations actually exist ------
-# Commented out wholesale rather than left as a disabled dropdown, at the
-# user's request, since Thai isn't implemented yet. To re-enable once real
-# translations (Qt Linguist .ts/.qm or a string table) are wired up:
-#   1. Uncomment this block and the QComboBox import above.
-#   2. Uncomment the "Language:" form row in __init__.
-#   3. Uncomment the language line in _on_save.
-#   4. Uncomment get_saved_language() below.
+# --- Language switch (disabled until Thai translations exist) --------------
+# To re-enable: uncomment this block, the QComboBox import above, the
+# "Language:" row in __init__, the language line in _on_save, and
+# get_saved_language() below.
 # LANGUAGES = ["English", "Thai"]
 # DEFAULT_LANGUAGE = "English"
 # ---------------------------------------------------------------------------
@@ -103,7 +96,9 @@ class SettingsDialog(QDialog):
             self._folder_lbl.setText(folder)
 
     def _on_save(self):
-        self._settings.setValue("inference_api_url", self._api_url_edit.text().strip())
+        # A blank URL falls back to the default, so requests do not all fail.
+        api_url = self._api_url_edit.text().strip() or INFERENCE_API_URL
+        self._settings.setValue("inference_api_url", api_url)
         self._settings.setValue("line_color", self._line_color.name())
         self._settings.setValue("export_folder", self._export_folder)
         # self._settings.setValue("language", self._language_combo.currentText())

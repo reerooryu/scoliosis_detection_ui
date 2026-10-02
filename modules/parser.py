@@ -1,11 +1,7 @@
-# Backend AI-model inference client.
-#
-# Talks to the Cobb Angle Inference API -- the same contract exercised in
-# test_api_visualization.ipynb: POST an image file to a `/predict` endpoint,
-# get back a JSON payload of detections/keypoints/angle_pairs. This module
-# owns only the HTTP call and its error handling; parsing the JSON into
-# clinical metrics is still ScoliosisModelEngine's job (modules/model_mock.py),
-# and drawing it is OverlayLayer's job (modules/overlay.py).
+# Client for the inference server: POST an image to /predict and get back
+# detections, keypoints and angle pairs as JSON. This module only makes the
+# HTTP call and handles its errors. ScoliosisModelEngine does the math and
+# OverlayLayer does the drawing.
 
 import logging
 import os
@@ -35,13 +31,10 @@ class BackendUnavailableError(Exception):
     """Raised when the inference API can't be reached, times out, or errors."""
 
 
-def _validate_inference_payload(data):
-    """Validate the minimum API contract consumed by ScoliosisModelEngine.
-
-    Keeping this at the network boundary prevents malformed JSON from failing
-    later in a UI slot or during a landmark drag, where it is much harder to
-    report a useful recovery action.
-    """
+def validate_inference_payload(data):
+    """Check a result has the fields ScoliosisModelEngine relies on. Raises
+    ValueError if not. Checking up front means bad data fails here with a
+    clear message, not later in the middle of a landmark drag."""
     if not isinstance(data, dict):
         raise ValueError("response root is not an object")
 
@@ -86,11 +79,10 @@ def _validate_inference_payload(data):
 
 
 def run_inference(image_path, api_url=INFERENCE_API_URL, timeout=INFERENCE_TIMEOUT):
-    """POSTs image_path to the inference API and returns (result_dict, elapsed_seconds).
+    """POST image_path to the server. Returns (result_dict, elapsed_seconds).
 
-    Raises BackendUnavailableError with a clinician-readable message on
-    connection failure, timeout, or a non-200 response -- callers should
-    catch this and let the user keep viewing/re-trying rather than crash.
+    Raises BackendUnavailableError with a readable message on any failure,
+    so the caller can let the user keep viewing the image and retry.
     """
     started = time.monotonic()
     try:
@@ -108,6 +100,9 @@ def run_inference(image_path, api_url=INFERENCE_API_URL, timeout=INFERENCE_TIMEO
         ) from exc
     except requests.exceptions.RequestException as exc:
         raise BackendUnavailableError(f"Inference request failed: {exc}") from exc
+    except OSError as exc:
+        # The image was moved or deleted after it was loaded.
+        raise BackendUnavailableError(f"Could not read the image file: {exc}") from exc
 
     if response.status_code != 200:
         raise BackendUnavailableError(
@@ -120,7 +115,7 @@ def run_inference(image_path, api_url=INFERENCE_API_URL, timeout=INFERENCE_TIMEO
         raise BackendUnavailableError("Inference API returned a response that wasn't valid JSON.") from exc
 
     try:
-        _validate_inference_payload(data)
+        validate_inference_payload(data)
     except ValueError as exc:
         raise BackendUnavailableError("Inference API returned an invalid result payload.") from exc
 
@@ -129,14 +124,9 @@ def run_inference(image_path, api_url=INFERENCE_API_URL, timeout=INFERENCE_TIMEO
 
 
 class InferenceWorker(QObject):
-    """Performs one blocking inference request in a dedicated QThread.
-
-    This class deliberately owns no QThread.  The UI creates the thread,
-    moves this worker into it, and tears both objects down through their Qt
-    lifecycle signals.  ``requests`` cannot abort an in-flight upload/read;
-    cancellation therefore suppresses delivery of an obsolete result as soon
-    as the request returns.
-    """
+    """Runs one blocking inference request on a QThread that the caller
+    creates and owns. A running request cannot be aborted, so cancel() only
+    stops its result from being delivered."""
 
     succeeded = Signal(int, dict, float)  # (request_id, result, elapsed_seconds)
     failed = Signal(int, str)             # (request_id, human-readable message)
@@ -151,11 +141,7 @@ class InferenceWorker(QObject):
         self._cancelled = threading.Event()
 
     def cancel(self):
-        """Thread-safe invalidation for a superseded request.
-
-        The active requests call remains bounded by its configured timeout;
-        its result is discarded rather than allowed to update the UI.
-        """
+        """Mark this request as stale. Safe to call from any thread."""
         self._cancelled.set()
 
     @Slot()
@@ -170,8 +156,7 @@ class InferenceWorker(QObject):
                 logger.warning("Inference request %s failed: %s", self.request_id, exc)
                 self.failed.emit(self.request_id, str(exc))
         except Exception as exc:
-            # Keep unexpected worker errors from silently terminating a
-            # background thread without restoring the UI's retry state.
+            # Report unexpected errors too, so the UI can offer a retry.
             if not self._cancelled.is_set():
                 logger.exception("Unexpected error in inference request %s", self.request_id)
                 self.failed.emit(

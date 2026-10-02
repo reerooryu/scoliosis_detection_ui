@@ -1,14 +1,6 @@
-# Clinical visual theme for the Scoliosis Detection & Measurement workspace.
-#
-# Centralizes the color palette and stylesheet for the app's *content*
-# areas -- the toolbar and the workspace (Load page / canvas / measurement
-# panel). Deliberately NOT applied at the QApplication level: the menu bar
-# (File/Edit/View) and all dialogs (Settings, file/color pickers, message
-# boxes) are intentionally left with native OS chrome, the same way the
-# original wizard-based app behaved. Call apply_clinical_theme(*widgets) on
-# only the specific container widgets that should carry the custom look;
-# anything that isn't a descendant of one of those (e.g. a QDialog, which
-# is always its own top-level window) is untouched and renders natively.
+# Dark clinical theme: the color palette and stylesheet for the toolbar and
+# workspace only. Menus and dialogs keep the native OS look, so the theme is
+# applied to specific widgets (apply_clinical_theme), never app-wide.
 
 # ---- Palette ---------------------------------------------------------------
 BG_APP = "#1c2024"           # Main window / canvas background
@@ -31,14 +23,9 @@ QWidget {{
     font-size: 11.5pt;
 }}
 
-/* Labels and plain frames must not paint their own opaque background --
-   once a widget has any QSS background-color (even inherited from the
-   generic QWidget rule above), Qt fills its own rect with it. Without
-   this, every label/frame nested inside a differently-shaded container
-   (DropZone, MeasurementPanel, a MetricRow) shows up as a visible
-   mismatched box instead of blending into its parent. Named frames below
-   (DropZone, MeasurementPanel) still get their own real background --
-   an ID selector is more specific and wins over this one. */
+/* Labels and frames stay transparent so they blend into their parent
+   instead of showing as mismatched boxes. DropZone and MeasurementPanel
+   set their own background below (the more specific selector wins). */
 QLabel, QFrame {{
     background-color: transparent;
 }}
@@ -134,13 +121,8 @@ QStatusBar {{
 
 
 def apply_clinical_theme(*widgets):
-    """Applies the clinical stylesheet to specific container widgets only
-    (e.g. the toolbar, the central stacked workspace, the status bar).
-
-    Never pass the QApplication or the QMainWindow itself here -- that
-    would cascade into the native menu bar and leak into every dialog the
-    window ever parents (Settings, QMessageBox, QFileDialog, QColorDialog),
-    which is exactly the look we don't want for those.
-    """
+    """Apply the stylesheet to specific widgets only (toolbar, workspace
+    stack, status bar). Never pass the QApplication or the QMainWindow: the
+    theme would spread to the menu bar and every dialog."""
     for widget in widgets:
         widget.setStyleSheet(STYLESHEET)

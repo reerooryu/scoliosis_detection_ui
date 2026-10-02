@@ -1,9 +1,9 @@
-# Main desktop application launcher for Scoliosis Detection UI
+# Entry point for the desktop app.
 
 import sys
 import os
 
-# Insert the current directory to sys.path to guarantee modules load correctly
+# Let `config` and `modules` import no matter where the app is launched from.
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
@@ -12,16 +12,12 @@ from PySide6.QtWidgets import QApplication
 from modules.main_window import MainWindow
 
 def main():
-    # Initialize the desktop application context (Qt6 handles High-DPI scaling automatically)
     app = QApplication(sys.argv)
 
-    # Instantiate and display the single-page clinical workspace. The clinical
-    # theme is applied internally by MainWindow to just its toolbar/workspace
-    # content -- the menu bar and all dialogs stay native OS style.
+    # MainWindow themes only its toolbar and workspace; menus and dialogs stay native.
     window = MainWindow()
     window.show()
 
-    # Run the desktop application main execution loop
     sys.exit(app.exec())
 
 if __name__ == "__main__":
