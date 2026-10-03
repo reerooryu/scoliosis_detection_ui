@@ -180,20 +180,25 @@ which returns `angle_pairs` entries). Do not add a second implementation in
 
 - a curve counts only if its Cobb angle is **more than 10°**
   (`MIN_COBB_ANGLE`);
-- each curve uses the pair of end vertebrae that gives it the **largest**
-  angle (upper endplate of the upper one, lower endplate of the lower one);
-- neighbouring curves bend in opposite directions and may share an end
-  vertebra or overlap by one (`MAX_CURVE_OVERLAP`);
+- neighbouring curves **share an end vertebra** (the lower end vertebra of
+  one curve is the upper end vertebra of the next) and bend in opposite
+  directions. The team rejected letting each curve pick its own pair, which
+  made two neighbouring curves use different vertebrae;
+- the **largest** curve is found first from every possible pair (upper
+  endplate of the upper vertebra, lower endplate of the lower one); curves
+  are then added above and below it, each taking the largest angle
+  available from the shared end vertebra;
+- a curve is a single bend: no pair bending the other way may lie between
+  its end vertebrae. Without this, "largest pair first" picks a pair that
+  spans several curves whenever the outer tilts are the most extreme;
 - end vertebrae are at least two places apart (`MIN_CURVE_SPAN`);
 - the search starts at the marker vertebra (detection class 1,
   `curve_start_index`) and ignores the vertebrae above it — neck vertebrae
   are small and their tilts are noisy enough to produce false curves.
 
-Among all sets of curves that satisfy the rules, the one with the largest
-total angle wins (a small dynamic program; verified against exhaustive
-search). The first and last vertebra can be end vertebrae, so a curve that
-runs to the bottom of the spine is found — the earlier peak-detection
-approach missed those.
+The first and last vertebra can be end vertebrae, so a curve that runs to
+the bottom of the spine is found — the earlier peak-detection approach
+missed those.
 
 `server.py:compute_cobb_results` calls it for the first result.
 `ScoliosisModelEngine.reselect_curves()` calls it again when a drag ends

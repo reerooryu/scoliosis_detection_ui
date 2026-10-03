@@ -258,12 +258,12 @@ The largest value is shown as the Primary Cobb Angle.
 The rules are in `modules/geometry.py::find_cobb_curves`. The server uses them for the first result, and the app uses them again each time a landmark is released after a drag.
 
 1. A curve counts only if its Cobb angle is more than 10 degrees.
-2. Each curve uses the pair of end vertebrae that gives it the largest angle.
-3. Neighbouring curves bend in opposite directions. They may share an end vertebra, or overlap by one vertebra.
-4. The two end vertebrae of a curve are at least two places apart.
+2. Neighbouring curves share an end vertebra: the lower end vertebra of one curve is the upper end vertebra of the next.
+3. Neighbouring curves bend in opposite directions.
+4. A curve is a single bend: no curve bending the other way lies between its end vertebrae. The two end vertebrae are at least two places apart.
 5. Curves are searched from the marker vertebra (detection class 1) downward. If no marker is detected, every vertebra is used.
 
-When several sets of curves satisfy the rules, the set with the largest total angle is chosen.
+The largest curve is found first, from every possible pair of vertebrae. Curves are then added above and below it one at a time. Each starts at the shared end vertebra and takes the other end vertebra that gives it the largest angle.
 
 ### CSVL and apex
 

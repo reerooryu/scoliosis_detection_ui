@@ -274,8 +274,8 @@ def compute_cobb_results(
     results["upper_obliques"] = [float(x) for x in degree_upper]
     results["lower_obliques"] = [float(x) for x in degree_lower]
 
-    # Curves: every curve above 10 degrees, each with the end vertebrae that
-    # give its largest angle, searched from the marker vertebra downward.
+    # Curves: every curve above 10 degrees, largest first, neighbours sharing
+    # an end vertebra, searched from the marker vertebra downward.
     angle_pairs = select_angle_pairs(degree_upper, degree_lower, curve_start_index(classes_list))
     cobb_angles = [pair["cobb_angle"] for pair in angle_pairs]
     upper_ends = [pair["upper_detection_index"] for pair in angle_pairs]

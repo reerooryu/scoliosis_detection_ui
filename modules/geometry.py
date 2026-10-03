@@ -61,7 +61,6 @@ def cobb_angle_between_obliques(first_oblique, second_oblique):
 
 MIN_COBB_ANGLE = 10.0   # a curve counts only if its Cobb angle is above this
 MIN_CURVE_SPAN = 2      # the two end vertebrae are at least this many places apart
-MAX_CURVE_OVERLAP = 1   # neighbouring curves may overlap by this many vertebrae
 MARKER_CLASS = 1        # detection class of the marker vertebra
 
 
@@ -85,47 +84,71 @@ def find_cobb_curves(upper_tilts, lower_tilts, start_index=0, min_angle=MIN_COBB
     A curve is measured from the upper endplate of its upper end vertebra to
     the lower endplate of its lower end vertebra. The rules:
       - a curve counts only if its Cobb angle is more than min_angle;
-      - neighbouring curves bend in opposite directions;
-      - neighbouring curves may share an end vertebra, or overlap by one.
-    Of every set of curves that follows these rules, the one with the
-    largest total angle is returned. This gives each curve the pair of end
-    vertebrae that makes its angle as large as possible.
+      - a curve is a single bend: no curve bending the other way lies
+        between its end vertebrae;
+      - neighbouring curves share an end vertebra: the lower end vertebra of
+        one curve is the upper end vertebra of the next;
+      - neighbouring curves bend in opposite directions.
+
+    The largest curve is found first, from every possible pair of vertebrae.
+    Curves are then added above and below it one at a time. Each starts at
+    the shared end vertebra and takes the other end vertebra that gives it
+    the largest angle.
     """
     count = min(len(upper_tilts), len(lower_tilts))
-    # best[(lower_index, direction)] = (total angle of the chain of curves
-    # ending here, upper_index of the last curve, key of the curve before it)
-    best = {}
-    for lower_index in range(start_index, count):
-        for upper_index in range(start_index, lower_index - MIN_CURVE_SPAN + 1):
-            angle = cobb_angle_between_obliques(upper_tilts[upper_index], lower_tilts[lower_index])
-            if angle <= min_angle:
-                continue
-            direction = 1 if lower_tilts[lower_index] > upper_tilts[upper_index] else -1
-            total, previous = angle, None
-            for (prev_lower, prev_direction), (prev_total, prev_upper, _) in best.items():
-                follows = (
-                    prev_direction == -direction
-                    and prev_lower < lower_index
-                    and prev_upper < upper_index
-                    and prev_lower <= upper_index + MAX_CURVE_OVERLAP
-                )
-                if follows and prev_total + angle > total:
-                    total, previous = prev_total + angle, (prev_lower, prev_direction)
-            key = (lower_index, direction)
-            if key not in best or total > best[key][0]:
-                best[key] = (total, upper_index, previous)
 
-    if not best:
+    # Every pair of vertebrae that could be a curve: (angle, bend direction).
+    pairs = {}
+    for upper_index in range(start_index, count):
+        for lower_index in range(upper_index + MIN_CURVE_SPAN, count):
+            angle = cobb_angle_between_obliques(upper_tilts[upper_index], lower_tilts[lower_index])
+            if angle > min_angle:
+                direction = 1 if lower_tilts[lower_index] > upper_tilts[upper_index] else -1
+                pairs[(upper_index, lower_index)] = (angle, direction)
+
+    def is_single_bend(upper_index, lower_index):
+        """False if a pair bending the other way lies inside this one. The
+        pair then spans several curves, so it is not one curve."""
+        direction = pairs[(upper_index, lower_index)][1]
+        return not any(
+            other_direction == -direction and upper_index <= other_upper and other_lower <= lower_index
+            for (other_upper, other_lower), (_, other_direction) in pairs.items()
+        )
+
+    def largest(keep):
+        """The single-bend pair with the largest angle among those that
+        keep(upper_index, lower_index, direction) accepts, or None."""
+        best = None
+        for (upper_index, lower_index), (angle, direction) in pairs.items():
+            if not keep(upper_index, lower_index, direction):
+                continue
+            if (best is None or angle > best[2]) and is_single_bend(upper_index, lower_index):
+                best = (upper_index, lower_index, angle)
+        return best
+
+    main_curve = largest(lambda upper_index, lower_index, direction: True)
+    if main_curve is None:
         return []
-    curves = []
-    key = max(best, key=lambda k: best[k][0])
-    while key is not None:
-        _, upper_index, previous = best[key]
-        lower_index = key[0]
-        angle = cobb_angle_between_obliques(upper_tilts[upper_index], lower_tilts[lower_index])
-        curves.append((upper_index, lower_index, angle))
-        key = previous
-    curves.reverse()
+    curves = [main_curve]
+
+    # Curves above: each ends on the upper end vertebra of the curve below it.
+    while True:
+        shared = curves[0][0]
+        wanted = -pairs[curves[0][:2]][1]
+        above = largest(lambda upper_index, lower_index, direction: lower_index == shared and direction == wanted)
+        if above is None:
+            break
+        curves.insert(0, above)
+
+    # Curves below: each starts on the lower end vertebra of the curve above it.
+    while True:
+        shared = curves[-1][1]
+        wanted = -pairs[curves[-1][:2]][1]
+        below = largest(lambda upper_index, lower_index, direction: upper_index == shared and direction == wanted)
+        if below is None:
+            break
+        curves.append(below)
+
     return curves
 
 
