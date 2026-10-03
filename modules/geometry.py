@@ -1,6 +1,8 @@
 # Clinical geometry: plain math with no Qt and no file or network access.
-#   1. Endplate tilt, Cobb angle, CSVL and apex -- used by the workspace.
-#   2. Prediction-vs-label comparisons -- used by the Model Validation tool.
+#   1. Endplate tilt, Cobb angle and curve selection -- used by the server
+#      and by the workspace, so both follow the same rules.
+#   2. CSVL and apex -- used by the workspace.
+#   3. Prediction-vs-label comparisons -- used by the Model Validation tool.
 
 import math
 
@@ -48,6 +50,99 @@ def cobb_angle_between_obliques(first_oblique, second_oblique):
     """
     difference = abs(float(second_oblique) - float(first_oblique)) % 180.0
     return min(difference, 180.0 - difference)
+
+
+# ---------------------------------------------------------------------------
+# Curve selection: which vertebrae are the end vertebrae of each curve
+# ---------------------------------------------------------------------------
+#
+# server.py uses this for the first result, and the app uses it again after
+# a landmark is edited, so the curves always follow the same rules.
+
+MIN_COBB_ANGLE = 10.0   # a curve counts only if its Cobb angle is above this
+MIN_CURVE_SPAN = 2      # the two end vertebrae are at least this many places apart
+MAX_CURVE_OVERLAP = 1   # neighbouring curves may overlap by this many vertebrae
+MARKER_CLASS = 1        # detection class of the marker vertebra
+
+
+def curve_start_index(classes):
+    """List position of the marker vertebra (class 1), or 0 if there is none.
+
+    Curves are searched from the marker downward. The vertebrae above it
+    (the neck) are left out: their endplates are small, so their tilts are
+    too unreliable to measure curves from.
+    """
+    for index, cls in enumerate(classes):
+        if cls == MARKER_CLASS:
+            return index
+    return 0
+
+
+def find_cobb_curves(upper_tilts, lower_tilts, start_index=0, min_angle=MIN_COBB_ANGLE):
+    """Choose the end vertebrae of every curve. Returns a list of
+    (upper_index, lower_index, cobb_angle), ordered top to bottom.
+
+    A curve is measured from the upper endplate of its upper end vertebra to
+    the lower endplate of its lower end vertebra. The rules:
+      - a curve counts only if its Cobb angle is more than min_angle;
+      - neighbouring curves bend in opposite directions;
+      - neighbouring curves may share an end vertebra, or overlap by one.
+    Of every set of curves that follows these rules, the one with the
+    largest total angle is returned. This gives each curve the pair of end
+    vertebrae that makes its angle as large as possible.
+    """
+    count = min(len(upper_tilts), len(lower_tilts))
+    # best[(lower_index, direction)] = (total angle of the chain of curves
+    # ending here, upper_index of the last curve, key of the curve before it)
+    best = {}
+    for lower_index in range(start_index, count):
+        for upper_index in range(start_index, lower_index - MIN_CURVE_SPAN + 1):
+            angle = cobb_angle_between_obliques(upper_tilts[upper_index], lower_tilts[lower_index])
+            if angle <= min_angle:
+                continue
+            direction = 1 if lower_tilts[lower_index] > upper_tilts[upper_index] else -1
+            total, previous = angle, None
+            for (prev_lower, prev_direction), (prev_total, prev_upper, _) in best.items():
+                follows = (
+                    prev_direction == -direction
+                    and prev_lower < lower_index
+                    and prev_upper < upper_index
+                    and prev_lower <= upper_index + MAX_CURVE_OVERLAP
+                )
+                if follows and prev_total + angle > total:
+                    total, previous = prev_total + angle, (prev_lower, prev_direction)
+            key = (lower_index, direction)
+            if key not in best or total > best[key][0]:
+                best[key] = (total, upper_index, previous)
+
+    if not best:
+        return []
+    curves = []
+    key = max(best, key=lambda k: best[k][0])
+    while key is not None:
+        _, upper_index, previous = best[key]
+        lower_index = key[0]
+        angle = cobb_angle_between_obliques(upper_tilts[upper_index], lower_tilts[lower_index])
+        curves.append((upper_index, lower_index, angle))
+        key = previous
+    curves.reverse()
+    return curves
+
+
+def select_angle_pairs(upper_tilts, lower_tilts, start_index=0):
+    """The curves from find_cobb_curves as "angle_pairs" entries, the form
+    used in the server result and by the app."""
+    pairs = []
+    for upper_index, lower_index, angle in find_cobb_curves(upper_tilts, lower_tilts, start_index):
+        pairs.append({
+            "pair_index": len(pairs),
+            "upper_detection_index": upper_index,
+            "lower_detection_index": lower_index,
+            "upper_oblique": float(upper_tilts[upper_index]),
+            "lower_oblique": float(lower_tilts[lower_index]),
+            "cobb_angle": angle,
+        })
+    return pairs
 
 
 # ---------------------------------------------------------------------------

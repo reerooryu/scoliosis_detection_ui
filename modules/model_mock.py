@@ -7,6 +7,7 @@ import os
 from config import DEFAULT_TEST_JSON_PATH, KP_TOP_LEFT, KP_TOP_RIGHT, KP_BOTTOM_LEFT, KP_BOTTOM_RIGHT
 from modules.geometry import (
     cobb_angle_between_obliques, compute_csvl_x, compute_apex, oblique_angle,
+    curve_start_index, select_angle_pairs,
 )
 
 # Maximum undo steps. Each step is a full copy of the result.
@@ -191,6 +192,33 @@ class ScoliosisModelEngine:
         self.recalculate_all_metrics()
         return True
 
+    def reselect_curves(self):
+        """Choose the curves again from the current keypoints, by the same
+        rules as the server (modules/geometry.py:find_cobb_curves). Called
+        after an edit. Returns True if the set of curves changed."""
+        detections = self.get_detections()
+        if any("upper_oblique" not in det or "lower_oblique" not in det for det in detections):
+            return False
+        before = [
+            (pair.get("upper_detection_index"), pair.get("lower_detection_index"))
+            for pair in self.get_angle_pairs()
+        ]
+        self.data["angle_pairs"] = select_angle_pairs(
+            [det["upper_oblique"] for det in detections],
+            [det["lower_oblique"] for det in detections],
+            curve_start_index([det.get("class", 0) for det in detections]),
+        )
+        self.recalculate_all_metrics()
+        after = [
+            (pair["upper_detection_index"], pair["lower_detection_index"])
+            for pair in self.get_angle_pairs()
+        ]
+        # Keep the summary lists in an exported result in step with the curves.
+        self.data["end_vertebrae_indices"] = sorted({index for pair in after for index in pair})
+        self.data["masker_point_upper"] = [upper for upper, _ in after]
+        self.data["masker_point_lower"] = [lower for _, lower in after]
+        return before != after
+
     def calculate_oblique_angle(self, p1, p2):
         """Endplate tilt in degrees from p1 (left corner) to p2 (right
         corner). See modules/geometry.py:oblique_angle."""
@@ -227,7 +255,7 @@ class ScoliosisModelEngine:
         self.data["upper_obliques"] = upper_obliques
         self.data["lower_obliques"] = lower_obliques
 
-        # 3. Recalculate Cobb angles for predefined pairs
+        # 3. Recalculate the Cobb angle of each current curve
         angle_pairs = self.get_angle_pairs()
         all_angles = []
         for pair in angle_pairs:

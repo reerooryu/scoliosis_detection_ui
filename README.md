@@ -132,8 +132,8 @@ On macOS, use `Cmd` instead of `Ctrl`.
 - **Load**: drag-and-drop or File → Open Image. JPG, JPEG and PNG.
 - **Analyse**: the image is sent to the server in the background, so the window stays responsive. A moving bar in the status bar shows that a request is running.
 - **Overlay**: vertebra outlines, Cobb lines and labels, and the CSVL are drawn on top of the image. The image itself is never changed.
-- **Edit**: drag landmarks in Edit Mode. Undo, Redo, and Reset Edits to return to the AI result.
-- **Measurements**: Primary Cobb Angle, Curve 1, Curve 2, Apex, CSVL Deviation, Vertebrae, Processing Time.
+- **Edit**: drag landmarks in Edit Mode. When you release a landmark, the curves are chosen again by the same rules the server uses. Undo, Redo, and Reset Edits to return to the AI result.
+- **Measurements**: Primary Cobb Angle, one row per curve (up to four), Apex, CSVL Deviation, Vertebrae, Processing Time.
 - **Save / Open Project**: a `.sdproj` file stores the image, your edits and the original AI result, so you can continue later without running the AI again.
 - **Export**: raw JSON, named after the image with a timestamp.
 - **Settings**: server address, Cobb line color, default export folder.
@@ -147,6 +147,7 @@ Not built yet: Annotated Image, PDF Report and CSV export (shown as "coming soon
 - CSVL deviation is in pixels, not mm. The image carries no pixel spacing.
 - Vertebrae are numbered from the top, starting at 0. They are not named (T1, L1, ...).
 - Cobb angles are reported between 0 and 90 degrees.
+- Curves are measured from the marker vertebra (detection class 1) downward. Vertebrae above it are not used.
 - The server does not mark the sacrum, so the CSVL is drawn through the lowest detected vertebra.
 
 ## Project layout
@@ -243,14 +244,26 @@ dx = x1 - x2, dy = y1 - y2
 
 ### Cobb angle
 
-For each curve, the server chooses an upper and a lower end vertebra. The Cobb angle is the angle between the upper tilt of the upper end vertebra and the lower tilt of the lower end vertebra:
+A curve runs from an upper end vertebra to a lower end vertebra. Its Cobb angle is the angle between the upper tilt of the upper end vertebra and the lower tilt of the lower end vertebra:
 
 ```
 d    = |upper tilt - lower tilt| mod 180
 Cobb = min(d, 180 - d)
 ```
 
-The app recalculates every curve when a landmark moves. The largest value is shown as the Primary Cobb Angle.
+The largest value is shown as the Primary Cobb Angle.
+
+### Which curves are reported
+
+The rules are in `modules/geometry.py::find_cobb_curves`. The server uses them for the first result, and the app uses them again each time a landmark is released after a drag.
+
+1. A curve counts only if its Cobb angle is more than 10 degrees.
+2. Each curve uses the pair of end vertebrae that gives it the largest angle.
+3. Neighbouring curves bend in opposite directions. They may share an end vertebra, or overlap by one vertebra.
+4. The two end vertebrae of a curve are at least two places apart.
+5. Curves are searched from the marker vertebra (detection class 1) downward. If no marker is detected, every vertebra is used.
+
+When several sets of curves satisfy the rules, the set with the largest total angle is chosen.
 
 ### CSVL and apex
 

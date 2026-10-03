@@ -35,6 +35,7 @@ class AnalysisSession(QObject):
         self.dirty = False  # True once landmarks have been dragged since the last export
         self.project_path = None    # path of the currently open .sdproj, if any
         self.project_dirty = False  # True once changed since the last Save Project
+        self._drag_moved = False    # True once the current drag has moved a landmark
         self.state = self.STATE_EMPTY
 
     @property
@@ -110,6 +111,7 @@ class AnalysisSession(QObject):
         if self.model_engine is None:
             return
         self.model_engine.update_keypoint(det_idx, kp_idx, x, y)
+        self._drag_moved = True
         self.dirty = True
         self.project_dirty = True
         self.metrics_changed.emit()
@@ -118,7 +120,19 @@ class AnalysisSession(QObject):
         if self.model_engine is None:
             return
         self.model_engine.snapshot_for_undo()
+        self._drag_moved = False
         self.edit_state_changed.emit()
+
+    def reselect_curves(self):
+        """When a drag ends, choose the curves again for the edited
+        landmarks. Returns True if the set of curves changed. Does nothing
+        if the handle was only clicked, not moved."""
+        if self.model_engine is None or not self._drag_moved:
+            return False
+        self._drag_moved = False
+        changed = self.model_engine.reselect_curves()
+        self.metrics_changed.emit()
+        return changed
 
     def refresh_edit_state(self):
         """Re-emit edit_state_changed. Called when a drag ends, because

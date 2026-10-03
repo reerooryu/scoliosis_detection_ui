@@ -1,4 +1,3 @@
-import io
 import math
 from threading import Lock
 from pathlib import Path
@@ -10,7 +9,6 @@ import timm
 import torch
 from detectron2.config import get_cfg
 from detectron2 import model_zoo
-from detectron2.data import MetadataCatalog, DatasetCatalog
 from detectron2.engine import DefaultPredictor
 from detectron2.layers import ShapeSpec
 from detectron2.modeling import BACKBONE_REGISTRY, Backbone
@@ -18,7 +16,7 @@ from detectron2.modeling.backbone.fpn import FPN, LastLevelMaxPool
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
-from modules.geometry import cobb_angle_between_obliques
+from modules.geometry import curve_start_index, select_angle_pairs
 
 app = FastAPI(title="Cobb Angle Inference API")
 ROOT_DIR = Path(__file__).resolve().parent
@@ -141,132 +139,6 @@ def cal_oblique01(x1_, y1_, x2_, y2_):
     return 0.0
 
 
-def savgol_smooth_1d(y, window=5, polyorder=2, mode="reflect"):
-    """Savitzky-Golay smoothing of a 1D series. The window is forced to be
-    odd and at least polyorder + 2."""
-    y = np.asarray(y, dtype=float).reshape(-1)
-    n = y.size
-    if n == 0:
-        return y.copy()
-
-    if window % 2 == 0:
-        window += 1
-    if window < polyorder + 2:
-        window = polyorder + 2
-        if window % 2 == 0:
-            window += 1
-    if window > n:
-        window = n if n % 2 == 1 else n - 1
-        window = max(window, polyorder + 2 + ((polyorder + 2) % 2 == 0))
-
-    half = window // 2
-    t = np.arange(-half, half + 1, dtype=float)
-    A = np.vander(t, N=polyorder + 1, increasing=True)
-    ATA_inv = np.linalg.pinv(A.T @ A)
-    e0 = np.zeros(polyorder + 1, dtype=float)
-    e0[0] = 1.0
-    c = e0 @ ATA_inv @ A.T
-
-    if half > 0:
-        if mode == "reflect":
-            ypad = np.r_[y[half:0:-1], y, y[-2:-half - 2:-1]]
-        elif mode == "edge":
-            ypad = np.r_[np.full(half, y[0]), y, np.full(half, y[-1])]
-        else:
-            raise ValueError("mode must be 'reflect' or 'edge'")
-    else:
-        ypad = y
-
-    return np.convolve(ypad, c[::-1], mode="valid")
-
-
-def count_curves_filtered(y_filt, prom=3.0, prom_window=2, min_dist=2):
-    """Find the peaks and valleys of a tilt series. One is kept only if it
-    stands out from its neighbours by at least `prom` degrees; of two closer
-    than `min_dist` positions, the more extreme one is kept."""
-    y = np.asarray(y_filt, dtype=float).reshape(-1)
-    n = len(y)
-    if n < 3:
-        return {
-            "n_upper_curves": 0,
-            "n_lower_curves": 0,
-            "peaks_idx": np.array([], dtype=int),
-            "peaks_val": np.array([], dtype=float),
-            "valleys_idx": np.array([], dtype=int),
-            "valleys_val": np.array([], dtype=float),
-        }
-
-    dy = np.diff(y)
-    s = np.sign(dy)
-    for i in range(1, len(s)):
-        if s[i] == 0:
-            s[i] = s[i - 1]
-    for i in range(len(s) - 2, -1, -1):
-        if s[i] == 0:
-            s[i] = s[i + 1]
-
-    peaks_idx = np.where((s[:-1] > 0) & (s[1:] < 0))[0] + 1
-    valleys_idx = np.where((s[:-1] < 0) & (s[1:] > 0))[0] + 1
-
-    def _prom_filter(idx, kind="max"):
-        keep = []
-        for i in idx:
-            left = y[max(0, i - prom_window):i]
-            right = y[i + 1 : min(n, i + 1 + prom_window)]
-            if len(left) == 0 or len(right) == 0:
-                continue
-            if kind == "max":
-                baseline = max(np.min(left), np.min(right))
-                p = y[i] - baseline
-            else:
-                baseline = min(np.max(left), np.max(right))
-                p = baseline - y[i]
-            if p >= prom:
-                keep.append(i)
-        return np.array(keep, dtype=int)
-
-    peaks_idx = _prom_filter(peaks_idx, kind="max")
-    valleys_idx = _prom_filter(valleys_idx, kind="min")
-
-    def _min_dist(idx, kind="max"):
-        if len(idx) == 0:
-            return idx
-        idx = np.sort(idx)
-        out = [idx[0]]
-        for i in idx[1:]:
-            if i - out[-1] >= min_dist:
-                out.append(i)
-            else:
-                if kind == "max" and y[i] > y[out[-1]]:
-                    out[-1] = i
-                if kind == "min" and y[i] < y[out[-1]]:
-                    out[-1] = i
-        return np.array(out, dtype=int)
-
-    peaks_idx = _min_dist(peaks_idx, kind="max")
-    valleys_idx = _min_dist(valleys_idx, kind="min")
-
-    return {
-        "n_upper_curves": int(len(peaks_idx)),
-        "n_lower_curves": int(len(valleys_idx)),
-        "peaks_idx": peaks_idx,
-        "peaks_val": y[peaks_idx] if len(peaks_idx) else np.array([], dtype=float),
-        "valleys_idx": valleys_idx,
-        "valleys_val": y[valleys_idx] if len(valleys_idx) else np.array([], dtype=float),
-    }
-
-
-def extend_segment(p1, p2, extend=50):
-    p1 = np.array(p1, dtype=np.float32)
-    p2 = np.array(p2, dtype=np.float32)
-    v = p2 - p1
-    length = np.linalg.norm(v)
-    if length < 1e-6:
-        return p1, p2
-    u = v / length
-    return p1 - extend * u, p2 + extend * u
-
-
 def read_image_bytes(image_bytes: bytes) -> np.ndarray:
     """Decode uploaded bytes into an RGB image array."""
     arr = np.frombuffer(image_bytes, np.uint8)
@@ -365,14 +237,14 @@ def compute_cobb_results(
     keypoints: List[np.ndarray],
     scores_list: Optional[List[float]] = None,
 ):
-    """Compute each vertebra's endplate tilts, pick the end vertebrae of each
-    curve (turning points of the tilt series, plus any class-1 detection),
-    and return the Cobb angle between each pair of neighbouring end vertebrae."""
+    """Compute each vertebra's endplate tilts, then the curves and their Cobb
+    angles. The curve rules live in modules/geometry.py:find_cobb_curves."""
     results: Dict[str, object] = {
         "all_angles": [],
         "selected_cobb_angle": None,
         "upper_obliques": [],
         "lower_obliques": [],
+        "end_vertebrae_indices": [],
         "masker_point_upper": [],
         "masker_point_lower": [],
         "detections": [],
@@ -399,67 +271,23 @@ def compute_cobb_results(
             }
         )
 
-    diff_degree_upper = np.concatenate(([0.0], np.diff(degree_upper))).tolist()
-    diff_degree_lower = np.concatenate(([0.0], np.diff(degree_lower))).tolist()
-
-    degree_upper_sg = savgol_smooth_1d(degree_upper, window=2, polyorder=3)
-    degree_lower_sg = savgol_smooth_1d(degree_lower, window=2, polyorder=3)
-    diff_upper_sg = savgol_smooth_1d(diff_degree_upper, window=2, polyorder=3)
-    diff_lower_sg = savgol_smooth_1d(diff_degree_lower, window=2, polyorder=3)
-
-    upper_ref = count_curves_filtered(degree_upper_sg, prom=3.0, prom_window=3, min_dist=3)
-    lower_ref = count_curves_filtered(degree_lower_sg, prom=3.0, prom_window=3, min_dist=3)
-
-    ths_cut_angle_peak = float(np.std(degree_upper_sg))
-    reference_upper_positions = []
-    if upper_ref["n_upper_curves"] + upper_ref["n_lower_curves"] > 0:
-        positions = np.concatenate((upper_ref["peaks_idx"], upper_ref["valleys_idx"]))
-        values = np.concatenate((upper_ref["peaks_val"], upper_ref["valleys_val"]))
-        for pos, val in zip(positions, values):
-            if abs(val) > ths_cut_angle_peak:
-                reference_upper_positions.append(int(pos))
-
-    reference_lower_positions = []
-    if lower_ref["n_upper_curves"] + lower_ref["n_lower_curves"] > 0:
-        positions = np.concatenate((lower_ref["peaks_idx"], lower_ref["valleys_idx"]))
-        values = np.concatenate((lower_ref["peaks_val"], lower_ref["valleys_val"]))
-        for pos, val in zip(positions, values):
-            if abs(val) > ths_cut_angle_peak:
-                reference_lower_positions.append(int(pos))
-
-    masker_point_upper = [i for i, cls in enumerate(classes_list) if cls == 1]
-    masker_point_lower = [i for i, cls in enumerate(classes_list) if cls == 1]
-    masker_point_upper = sorted(set(masker_point_upper + reference_upper_positions))
-    masker_point_lower = sorted(set(masker_point_lower + reference_lower_positions))
-
-    results["masker_point_upper"] = masker_point_upper
-    results["masker_point_lower"] = masker_point_lower
     results["upper_obliques"] = [float(x) for x in degree_upper]
     results["lower_obliques"] = [float(x) for x in degree_lower]
 
-    cobb_angles = []
-    angle_pairs = []
-    for idx in range(len(masker_point_upper) - 1):
-        upper_idx = masker_point_upper[idx]
-        lower_idx = masker_point_upper[idx + 1]
-        upper_angle = degree_upper[upper_idx]
-        lower_angle = degree_lower[lower_idx]
-        cobb_angle_value = cobb_angle_between_obliques(upper_angle, lower_angle)
-        cobb_angles.append(cobb_angle_value)
-        angle_pairs.append(
-            {
-                "pair_index": idx,
-                "upper_detection_index": upper_idx,
-                "lower_detection_index": lower_idx,
-                "upper_oblique": float(upper_angle),
-                "lower_oblique": float(lower_angle),
-                "cobb_angle": cobb_angle_value,
-            }
-        )
+    # Curves: every curve above 10 degrees, each with the end vertebrae that
+    # give its largest angle, searched from the marker vertebra downward.
+    angle_pairs = select_angle_pairs(degree_upper, degree_lower, curve_start_index(classes_list))
+    cobb_angles = [pair["cobb_angle"] for pair in angle_pairs]
+    upper_ends = [pair["upper_detection_index"] for pair in angle_pairs]
+    lower_ends = [pair["lower_detection_index"] for pair in angle_pairs]
 
-    results["all_angles"] = cobb_angles
     results["angle_pairs"] = angle_pairs
+    results["all_angles"] = cobb_angles
     results["selected_cobb_angle"] = float(max(cobb_angles)) if cobb_angles else None
+    results["end_vertebrae_indices"] = sorted(set(upper_ends + lower_ends))
+    # Older names, kept so existing notebooks keep working.
+    results["masker_point_upper"] = upper_ends
+    results["masker_point_lower"] = lower_ends
 
     return results
 

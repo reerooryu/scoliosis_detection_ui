@@ -169,7 +169,15 @@ class AnalysisController(QObject):
             self.overlay_layer.render(self.session.model_engine)
 
     def on_drag_finished(self, det_idx, kp_idx):
-        """Mouse release: refresh the undo/redo/"has edits" state."""
+        """Mouse release: choose the curves again for the edited landmarks
+        (a curve can appear, disappear or change its end vertebrae), redraw,
+        and refresh the undo/redo/"has edits" state."""
+        engine = self.session.model_engine
+        if engine is not None and self.session.reselect_curves():
+            self.overlay_layer.render(engine)
+            self.status_message.emit(
+                "Curves updated after the edit: {} above 10°.".format(len(engine.get_angle_pairs()))
+            )
         self.session.refresh_edit_state()
 
     def undo(self):

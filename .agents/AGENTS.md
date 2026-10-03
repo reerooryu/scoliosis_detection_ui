@@ -29,7 +29,8 @@ are coupled by:
 - The JSON contract described below (`test_api_visualization.ipynb` was the
   original reference for this contract).
 - **`modules/geometry.py` is imported directly by `server.py`** for
-  `cobb_angle_between_obliques` — this is the one place the backend reaches
+  the curve-selection functions (`curve_start_index`, `select_angle_pairs`)
+  — this is the one place the backend reaches
   into client code. Keep this in mind if you ever try to run the backend
   somewhere `modules/` isn't deployed alongside it, or if you refactor
   `geometry.py`'s public function signatures.
@@ -132,7 +133,8 @@ this shape:
   ],
   "all_angles": [float, ...],
   "selected_cobb_angle": float | null,
-  "upper_obliques": [float, ...], "lower_obliques": [float, ...]
+  "upper_obliques": [float, ...], "lower_obliques": [float, ...],
+  "end_vertebrae_indices": [int, ...]
 }
 ```
 
@@ -162,12 +164,43 @@ near a curve's apex), a plain atan2 diverges from the correct value by up to
 function, verify them against each other exhaustively across the dx/dy sign
 combinations, not just a couple of manual test points.
 
-Similarly, `modules/geometry.py:cobb_angle_between_obliques` is now
-**imported directly by `server.py`** (not duplicated) — the client
-recalculates Cobb angles locally after every keypoint drag using the exact
-same function the backend used for its own initial result. Endplates are
-undirected lines, so this function normalizes the periodic 180° ambiguity
-before taking the acute angle between two obliques.
+Similarly, `modules/geometry.py:cobb_angle_between_obliques` is **shared by
+both sides** (the server reaches it through `select_angle_pairs`) — the
+client recalculates Cobb angles locally after every keypoint drag using the
+exact same function the backend used for its own initial result. Endplates
+are undirected lines, so this function normalizes the periodic 180°
+ambiguity before taking the acute angle between two obliques.
+
+## Curve selection — one implementation, used by both sides
+
+Which vertebrae are the end vertebrae of each curve is decided by
+`modules/geometry.py:find_cobb_curves` (wrapped by `select_angle_pairs`,
+which returns `angle_pairs` entries). Do not add a second implementation in
+`server.py` or the client. The rules, from the clinical team's feedback:
+
+- a curve counts only if its Cobb angle is **more than 10°**
+  (`MIN_COBB_ANGLE`);
+- each curve uses the pair of end vertebrae that gives it the **largest**
+  angle (upper endplate of the upper one, lower endplate of the lower one);
+- neighbouring curves bend in opposite directions and may share an end
+  vertebra or overlap by one (`MAX_CURVE_OVERLAP`);
+- end vertebrae are at least two places apart (`MIN_CURVE_SPAN`);
+- the search starts at the marker vertebra (detection class 1,
+  `curve_start_index`) and ignores the vertebrae above it — neck vertebrae
+  are small and their tilts are noisy enough to produce false curves.
+
+Among all sets of curves that satisfy the rules, the one with the largest
+total angle wins (a small dynamic program; verified against exhaustive
+search). The first and last vertebra can be end vertebrae, so a curve that
+runs to the bottom of the spine is found — the earlier peak-detection
+approach missed those.
+
+`server.py:compute_cobb_results` calls it for the first result.
+`ScoliosisModelEngine.reselect_curves()` calls it again when a drag ends
+(`AnalysisController.on_drag_finished` → `AnalysisSession.reselect_curves`),
+never on every mouse-move tick, so the number of curves can change after an
+edit but not during one. A click that does not move a landmark does not
+re-select, so results saved under older rules stay as saved until edited.
 
 `ScoliosisModelEngine.recalculate_all_metrics()` **always overwrites** the
 backend's own `upper_oblique`/`lower_oblique`/`cobb_angle` values with
@@ -337,9 +370,11 @@ pair per request (never reuses one), tagged with an incrementing
 - `filter_and_sort_detections`: keeps only the **highest-confidence**
   class-1 detection if there are duplicates (not just the first one found),
   then sorts everything top-to-bottom by vertical box center.
-- `compute_cobb_results` uses `cobb_angle_between_obliques` from
-  `modules/geometry.py` (shared with the client — see the angle-math section
-  above), and returns `score: None` when the caller didn't pass
+- `compute_cobb_results` computes the endplate tilts and gets the curves
+  from `modules/geometry.py:select_angle_pairs` (shared with the client —
+  see "Curve selection" above). It also returns `end_vertebrae_indices`, and
+  `masker_point_upper`/`masker_point_lower` (older names, kept for existing
+  notebooks). It returns `score: None` when the caller didn't pass
   `scores_list` (kept optional for backward compatibility with earlier
   call sites).
 - Startup requires the model weights file at
