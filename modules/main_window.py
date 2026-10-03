@@ -57,8 +57,10 @@ class MetricRow(QFrame):
 class WorkspacePage(QWidget):
     """Canvas (left) + measurement summary and export action (right)."""
 
+    # Curve 1 and 2 are always shown; Curve 3 and 4 only when they exist.
+    MAX_CURVE_ROWS = 4
     METRIC_KEYS = [
-        "Primary Cobb Angle", "Curve 1", "Curve 2", "Apex",
+        "Primary Cobb Angle", "Curve 1", "Curve 2", "Curve 3", "Curve 4", "Apex",
         "CSVL Deviation", "Vertebrae", "Processing Time"
     ]
 
@@ -118,10 +120,19 @@ class WorkspacePage(QWidget):
 
         splitter.addWidget(panel)
         splitter.setSizes([1000, 300])
+        self.show_curves([])
+
+    def show_curves(self, pairs):
+        """Fill one row per curve with its Cobb angle."""
+        for i in range(self.MAX_CURVE_ROWS):
+            row = self.metrics["Curve {}".format(i + 1)]
+            row.set_value("{:.1f}°".format(pairs[i]["cobb_angle"]) if i < len(pairs) else "-")
+            row.setVisible(i < max(len(pairs), 2))
 
     def reset_metrics(self):
         for row in self.metrics.values():
             row.set_value("-")
+        self.show_curves([])
 
 
 class MainWindow(QMainWindow):
@@ -413,11 +424,12 @@ class MainWindow(QMainWindow):
             return
         metrics = self.workspace_page.metrics
 
-        metrics["Primary Cobb Angle"].set_value("{:.1f}°".format(engine.get_selected_cobb_angle()))
-
         pairs = engine.get_angle_pairs()
-        metrics["Curve 1"].set_value("{:.1f}°".format(pairs[0]["cobb_angle"]) if len(pairs) > 0 else "-")
-        metrics["Curve 2"].set_value("{:.1f}°".format(pairs[1]["cobb_angle"]) if len(pairs) > 1 else "-")
+        if pairs:
+            metrics["Primary Cobb Angle"].set_value("{:.1f}°".format(engine.get_selected_cobb_angle()))
+        else:
+            metrics["Primary Cobb Angle"].set_value("No curve above 10°")
+        self.workspace_page.show_curves(pairs)
 
         apex_idx, deviation_px = engine.get_apex()
         if apex_idx is not None:
