@@ -39,16 +39,30 @@ class MetricRow(QFrame):
         layout.setContentsMargins(0, 6, 0, 6)
         layout.setSpacing(2)
 
+        # Small color square in front of the label; hidden unless set_color()
+        # is called (used by the curve rows to match the lines on the image).
+        self.color_chip = QLabel()
+        self.color_chip.setFixedSize(10, 10)
+        self.color_chip.hide()
         lbl = QLabel(label)
         lbl.setObjectName("MetricLabel")
         self.value_lbl = QLabel("-")
         self.value_lbl.setObjectName("MetricValue")
 
-        layout.addWidget(lbl)
+        header = QHBoxLayout()
+        header.setSpacing(6)
+        header.addWidget(self.color_chip)
+        header.addWidget(lbl)
+        header.addStretch()
+        layout.addLayout(header)
         layout.addWidget(self.value_lbl)
 
     def set_value(self, text):
         self.value_lbl.setText(text)
+
+    def set_color(self, color):
+        self.color_chip.setStyleSheet("background-color: {}; border-radius: 2px;".format(color))
+        self.color_chip.show()
 
     def set_tooltip(self, text):
         self.value_lbl.setToolTip(text)
@@ -129,6 +143,11 @@ class WorkspacePage(QWidget):
             row.set_value("{:.1f}°".format(pairs[i]["cobb_angle"]) if i < len(pairs) else "-")
             row.setVisible(i < max(len(pairs), 2))
 
+    def set_curve_colors(self, colors):
+        """Show each curve's color next to its row, matching the image."""
+        for i in range(self.MAX_CURVE_ROWS):
+            self.metrics["Curve {}".format(i + 1)].set_color(colors[i % len(colors)])
+
     def reset_metrics(self):
         for row in self.metrics.values():
             row.set_value("-")
@@ -165,10 +184,9 @@ class MainWindow(QMainWindow):
         # widgets -- the menu bar and every dialog stay native OS style.
         theme.apply_clinical_theme(self.toolbar, self.stack, self.statusBar())
 
-        self.overlay_layer = OverlayLayer(
-            self.workspace_page.canvas,
-            cobb_line_color=SettingsDialog.get_saved_line_color(),
-        )
+        curve_colors = SettingsDialog.get_saved_curve_colors()
+        self.overlay_layer = OverlayLayer(self.workspace_page.canvas, curve_colors=curve_colors)
+        self.workspace_page.set_curve_colors(curve_colors)
         # Cobb labels are placed in screen pixels, so re-place them on zoom.
         self.workspace_page.canvas.view_changed.connect(self.overlay_layer.reposition_labels)
 
@@ -512,7 +530,13 @@ class MainWindow(QMainWindow):
     def _on_open_settings(self):
         dialog = SettingsDialog(self)
         if dialog.exec() == QDialog.Accepted:
-            self.overlay_layer.set_cobb_line_color(SettingsDialog.get_saved_line_color())
+            self._apply_curve_colors()
+
+    def _apply_curve_colors(self):
+        """Use the saved curve colors on the image and in the panel."""
+        colors = SettingsDialog.get_saved_curve_colors()
+        self.overlay_layer.set_curve_colors(colors)
+        self.workspace_page.set_curve_colors(colors)
 
     def _on_export_clicked(self):
         if self.session.model_engine is None:

@@ -1,4 +1,4 @@
-# Settings dialog: inference API URL, Cobb line color and default export
+# Settings dialog: inference API URL, curve colors and default export
 # folder. Saved with QSettings, so they survive restarts.
 
 import os
@@ -11,11 +11,10 @@ from PySide6.QtWidgets import (
     # QComboBox,  # only needed for the language switch below -- re-add on import if re-enabling
 )
 
-from config import INFERENCE_API_URL
+from config import INFERENCE_API_URL, CURVE_COLORS
 
 ORG_NAME = "ScoliosisSuite"
 APP_KEY = "DetectionUI"
-DEFAULT_LINE_COLOR = "#ff5722"
 
 # --- Language switch (disabled until Thai translations exist) --------------
 # To re-enable: uncomment this block, the QComboBox import above, the
@@ -33,7 +32,7 @@ class SettingsDialog(QDialog):
         self.setMinimumWidth(380)
 
         self._settings = QSettings(ORG_NAME, APP_KEY)
-        self._line_color = QColor(self._settings.value("line_color", DEFAULT_LINE_COLOR))
+        self._curve_colors = [QColor(color) for color in self.get_saved_curve_colors()]
         self._export_folder = self._settings.value("export_folder", os.path.expanduser("~"))
 
         form = QFormLayout()
@@ -42,16 +41,23 @@ class SettingsDialog(QDialog):
         self._api_url_edit.setMinimumWidth(220)
         form.addRow("Inference API URL:", self._api_url_edit)
 
+        # One button per curve, filled with that curve's color. Click to change.
         color_row = QHBoxLayout()
-        self._color_swatch = QLabel()
-        self._color_swatch.setFixedSize(24, 24)
-        self._update_swatch()
-        color_btn = QPushButton("Choose…")
-        color_btn.clicked.connect(self._pick_color)
-        color_row.addWidget(self._color_swatch)
-        color_row.addWidget(color_btn)
+        self._color_buttons = []
+        for index in range(len(CURVE_COLORS)):
+            button = QPushButton(str(index + 1))
+            button.setFixedSize(44, 26)
+            button.setToolTip("Color of curve {}. Click to change.".format(index + 1))
+            button.clicked.connect(lambda _checked=False, i=index: self._pick_color(i))
+            color_row.addWidget(button)
+            self._color_buttons.append(button)
+        reset_btn = QPushButton("Reset")
+        reset_btn.setToolTip("Restore the default curve colors")
+        reset_btn.clicked.connect(self._reset_colors)
+        color_row.addWidget(reset_btn)
         color_row.addStretch()
-        form.addRow("Default line color:", color_row)
+        self._update_color_buttons()
+        form.addRow("Curve colors:", color_row)
 
         folder_row = QHBoxLayout()
         self._folder_lbl = QLabel(self._export_folder)
@@ -77,17 +83,26 @@ class SettingsDialog(QDialog):
         layout.addLayout(form)
         layout.addWidget(buttons)
 
-    def _update_swatch(self):
-        self._color_swatch.setStyleSheet(
-            f"background-color: {self._line_color.name()}; "
-            "border: 1px solid #3a4048; border-radius: 3px;"
-        )
+    def _update_color_buttons(self):
+        for button, color in zip(self._color_buttons, self._curve_colors):
+            # Dark number on a light color, light number on a dark one.
+            text = "#000000" if color.lightness() > 140 else "#ffffff"
+            button.setStyleSheet(
+                f"background-color: {color.name()}; color: {text}; font-weight: bold; "
+                "border: 1px solid #3a4048; border-radius: 3px;"
+            )
 
-    def _pick_color(self):
-        color = QColorDialog.getColor(self._line_color, self, "Default Line Color")
+    def _pick_color(self, index):
+        color = QColorDialog.getColor(
+            self._curve_colors[index], self, "Color of Curve {}".format(index + 1)
+        )
         if color.isValid():
-            self._line_color = color
-            self._update_swatch()
+            self._curve_colors[index] = color
+            self._update_color_buttons()
+
+    def _reset_colors(self):
+        self._curve_colors = [QColor(color) for color in CURVE_COLORS]
+        self._update_color_buttons()
 
     def _pick_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Default Export Folder", self._export_folder)
@@ -99,7 +114,8 @@ class SettingsDialog(QDialog):
         # A blank URL falls back to the default, so requests do not all fail.
         api_url = self._api_url_edit.text().strip() or INFERENCE_API_URL
         self._settings.setValue("inference_api_url", api_url)
-        self._settings.setValue("line_color", self._line_color.name())
+        for index, color in enumerate(self._curve_colors):
+            self._settings.setValue("curve_color_{}".format(index + 1), color.name())
         self._settings.setValue("export_folder", self._export_folder)
         # self._settings.setValue("language", self._language_combo.currentText())
         self.accept()
@@ -111,11 +127,19 @@ class SettingsDialog(QDialog):
         return settings.value("inference_api_url", INFERENCE_API_URL)
 
     @staticmethod
-    def get_saved_line_color():
-        """Returns the persisted Cobb measurement-line color as a valid hex value."""
+    def get_saved_curve_colors():
+        """The saved color of each curve as hex strings, top curve first.
+        Anything missing or invalid falls back to the default."""
         settings = QSettings(ORG_NAME, APP_KEY)
-        color = QColor(settings.value("line_color", DEFAULT_LINE_COLOR))
-        return color.name() if color.isValid() else DEFAULT_LINE_COLOR
+        colors = []
+        for index, default in enumerate(CURVE_COLORS):
+            saved = settings.value("curve_color_{}".format(index + 1))
+            if saved is None and index == 0:
+                # Older versions had one line color; keep it for curve 1.
+                saved = settings.value("line_color")
+            color = QColor(saved) if saved else QColor()
+            colors.append(color.name() if color.isValid() else default)
+        return colors
 
     @staticmethod
     def get_saved_export_folder():

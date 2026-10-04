@@ -131,12 +131,12 @@ On macOS, use `Cmd` instead of `Ctrl`.
 
 - **Load**: drag-and-drop or File → Open Image. JPG, JPEG and PNG.
 - **Analyse**: the image is sent to the server in the background, so the window stays responsive. A moving bar in the status bar shows that a request is running.
-- **Overlay**: vertebra outlines, Cobb lines and labels, and the CSVL are drawn on top of the image. The image itself is never changed.
+- **Overlay**: vertebra outlines, Cobb lines and labels, and the CSVL are drawn on top of the image. Each curve has its own color for its two lines, its label and its row in the measurement panel. The image itself is never changed.
 - **Edit**: drag landmarks in Edit Mode. When you release a landmark, the curves are chosen again by the same rules the server uses. Undo, Redo, and Reset Edits to return to the AI result.
 - **Measurements**: Primary Cobb Angle, one row per curve (up to four), Apex, CSVL Deviation, Vertebrae, Processing Time.
 - **Save / Open Project**: a `.sdproj` file stores the image, your edits and the original AI result, so you can continue later without running the AI again.
 - **Export**: raw JSON, named after the image with a timestamp.
-- **Settings**: server address, Cobb line color, default export folder.
+- **Settings**: server address, the color of each curve, default export folder.
 - **Model Validation** (Tools menu): compares a prediction JSON with a ground-truth label JSON. For the ML team.
 
 Not built yet: Annotated Image, PDF Report and CSV export (shown as "coming soon" in the Export dialog).

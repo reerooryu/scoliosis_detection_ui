@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 from config import (
     KP_CENTER, KP_TOP_LEFT, KP_TOP_RIGHT, KP_BOTTOM_LEFT, KP_BOTTOM_RIGHT,
     COLOR_VERTEBRA_OUTLINE, COLOR_CORRIDOR_FILL, COLOR_KEYPOINT_CENTER,
-    COLOR_KEYPOINT_CORNER, COLOR_COBB_LINE, COLOR_CSVL_LINE,
+    COLOR_KEYPOINT_CORNER, COLOR_CSVL_LINE, CURVE_COLORS,
     HANDLE_RADIUS, ACTIVE_HANDLE_RADIUS
 )
 
@@ -141,7 +141,7 @@ class SpinalCorridorItem(QGraphicsPolygonItem):
 class CobbMeasurementLineItem(QGraphicsLineItem):
     """Measurement line for a Cobb angle, drawn along a vertebra endplate."""
 
-    def __init__(self, color=COLOR_COBB_LINE, parent_item=None):
+    def __init__(self, color=CURVE_COLORS[0], parent_item=None):
         super().__init__(parent_item)
         self.set_color(color)
 
@@ -180,10 +180,11 @@ class OverlayLayer:
     """Creates and updates the overlay items for one ImageCanvas from a
     ScoliosisModelEngine's data."""
 
-    def __init__(self, canvas, cobb_line_color=COLOR_COBB_LINE):
+    def __init__(self, canvas, curve_colors=None):
         self.canvas = canvas
         self.signals = OverlaySignals()
-        self.cobb_line_color = cobb_line_color
+        # One color per curve (its two lines and its label), top curve first.
+        self.curve_colors = list(curve_colors or CURVE_COLORS)
         self.corridor_item = None
         self.outline_items = []
         self.handle_items = []
@@ -193,6 +194,7 @@ class OverlayLayer:
         # (mid_y, min_x, max_x, label) per curve, kept so the labels can be
         # re-placed when the zoom changes.
         self._label_anchors = []
+        self._label_angles = []   # Cobb angle shown on each label
         self.interactive_mode = False
 
     def clear(self):
@@ -210,6 +212,7 @@ class OverlayLayer:
         self.cobb_texts = []
         self.csvl_item = None
         self._label_anchors = []
+        self._label_angles = []
 
     @staticmethod
     def _remove_item_if_valid(scene, item):
@@ -223,12 +226,32 @@ class OverlayLayer:
         for handle in self.handle_items:
             handle.setVisible(enabled)
 
-    def set_cobb_line_color(self, color):
-        """Apply a saved measurement-line color to current and future items."""
-        self.cobb_line_color = color
-        for line in self.cobb_lines:
+    def curve_color(self, curve_index):
+        """Color of a curve. With more curves than colors, colors repeat."""
+        return self.curve_colors[curve_index % len(self.curve_colors)]
+
+    def set_curve_colors(self, colors):
+        """Apply new curve colors to the lines and labels already drawn, and
+        to any drawn later."""
+        self.curve_colors = list(colors) or list(CURVE_COLORS)
+        for index, line in enumerate(self.cobb_lines):
             if shiboken6.isValid(line):
-                line.set_color(color)
+                line.set_color(self.curve_color(index // 2))   # two lines per curve
+        for index, label in enumerate(self.cobb_texts):
+            if shiboken6.isValid(label) and index < len(self._label_angles):
+                label.setHtml(self._label_html(index, self._label_angles[index]))
+
+    def _label_html(self, curve_index, cobb_angle):
+        """Label text for one curve, with a strip in the curve's color so the
+        label can be matched to its two lines."""
+        return (
+            "<table cellspacing='0' cellpadding='0'><tr>"
+            f"<td width='8' style='background-color: {self.curve_color(curve_index)};'></td>"
+            "<td style='background-color: rgba(255,255,255,225); padding: 3px 6px 3px 6px;'>"
+            f"<b style='color:#333; font-size:12px;'>Curve #{curve_index + 1}</b><br/>"
+            f"<span style='color:#111; font-size:14px; font-weight:bold;'>Angle: {cobb_angle:.2f}°</span>"
+            "</td></tr></table>"
+        )
 
     def render(self, model_engine):
         """Create the overlay items on the first call; update them in place
@@ -302,8 +325,8 @@ class OverlayLayer:
                 self._remove_item_if_valid(scene, item)
 
             self.cobb_lines = []
-            for _ in range(expected_lines):
-                line = CobbMeasurementLineItem(self.cobb_line_color)
+            for index in range(expected_lines):
+                line = CobbMeasurementLineItem(self.curve_color(index // 2))   # two lines per curve
                 line.setZValue(2.5)
                 scene.addItem(line)
                 self.cobb_lines.append(line)
@@ -320,6 +343,7 @@ class OverlayLayer:
         # (mid_y, local_min_x, local_max_x, txt_item) per curve, resolved to
         # final screen positions after this loop by _place_labels_without_overlap.
         pending_labels = []
+        label_angles = [0.0] * len(angle_pairs)
         for idx, pair in enumerate(angle_pairs):
             u_idx = pair.get("upper_detection_index")
             l_idx = pair.get("lower_detection_index")
@@ -356,16 +380,12 @@ class OverlayLayer:
 
             mid_y = (p1_u.y() + p1_l.y()) / 2.0
             txt_item = self.cobb_texts[idx]
-            txt_item.setHtml(
-                "<div style='background-color: rgba(255,255,255,210); "
-                "border: 1.5px solid rgb(255,87,34); padding:4px; border-radius:4px;'>"
-                f"<b style='color: rgb(255,87,34); font-size:12px;'>Curve #{idx + 1}</b><br/>"
-                f"<span style='color:#333; font-size:14px; font-weight:bold;'>Angle: {cobb_val:.2f}°</span>"
-                "</div>"
-            )
+            txt_item.setHtml(self._label_html(idx, cobb_val))
+            label_angles[idx] = cobb_val
             pending_labels.append((mid_y, local_min_x, local_max_x, txt_item))
 
         self._label_anchors = pending_labels
+        self._label_angles = label_angles
         self._place_labels_without_overlap(pending_labels)
 
     def reposition_labels(self):

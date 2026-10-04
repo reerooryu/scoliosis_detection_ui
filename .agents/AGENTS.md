@@ -93,7 +93,7 @@ the canvas. On failure, the image stays visible and the user can retry.
 | `modules/model_mock.py` | `ScoliosisModelEngine` — the clinical data/math state machine: loads a result (from disk or from the live API), scales coordinates to the displayed image, recalculates oblique/Cobb angles after any edit, and owns undo/redo + baseline/"Reset Edits". Despite the name ("mock"), this is used for **both** the demo JSON and live API results — the name is a holdover from before the real backend existed. |
 | `modules/geometry.py` | Pure, unit-testable math: `oblique_angle` (exact port of `server.py`'s `cal_oblique01`), `cobb_angle_between_obliques` (shared with `server.py`), CSVL/apex computation, and the prediction-vs-label comparison functions used by `modules/validation.py`. |
 | `modules/parser.py` | `run_inference()` (blocking HTTP POST to the backend) + `InferenceWorker(QObject)` (thread-safe wrapper run on a `QThread` by `MainWindow`). Validates the response shape (`validate_inference_payload`) before it ever reaches UI code. |
-| `modules/settings_dialog.py` | `SettingsDialog` — API URL, default Cobb-line color, default export folder, all persisted via `QSettings`. Also has a **fully commented-out** language switch (see "Known deferred work" below). |
+| `modules/settings_dialog.py` | `SettingsDialog` — API URL, one color per curve, default export folder, all persisted via `QSettings`. Also has a **fully commented-out** language switch (see "Known deferred work" below). |
 | `modules/export.py` | `ExportDialog` — only "Raw JSON" is wired up (delegates to `modules/utils.py:export_json_data`, timestamped filename). Annotated Image / PDF / CSV are shown disabled ("coming soon"). |
 | `modules/project.py` | `write_project()` / `read_project()` — save/reopen an in-progress assessment as a `.sdproj` zip bundle (image + current data + AI baseline), so a clinician can resume editing later without re-running inference. See "Project save/open" below. |
 | `modules/validation.py` | `ValidationDialog` — a **separate, ML-team QA workflow** (Tools → Model Validation) comparing a prediction JSON against a ground-truth label JSON. Not part of the per-patient clinical flow; deliberately has no shared state with `MainWindow`. |
@@ -252,11 +252,18 @@ because of several sharp edges already fixed once each:
   curve). Labels are nudged vertically per-side if they'd collide with the
   previous label on that same side, then clamped inside the viewport as a
   last-resort fallback.
-- **Cobb line color is a live setting**, not a constant: `OverlayLayer` takes
-  `cobb_line_color` in its constructor (from
-  `SettingsDialog.get_saved_line_color()`) and `set_cobb_line_color()` is
-  called when Settings is saved, updating existing `CobbMeasurementLineItem`s
-  in place via `set_color()` (preserves line width).
+- **Each curve has its own color, and the colors are a live setting.**
+  The defaults are `config.CURVE_COLORS` (four colors; a fifth curve reuses
+  the first). `OverlayLayer` takes `curve_colors` in its constructor (from
+  `SettingsDialog.get_saved_curve_colors()`), and `MainWindow.
+  _apply_curve_colors()` calls `set_curve_colors()` when Settings is saved,
+  which recolors the existing lines and labels in place and the color chips
+  in the measurement panel. A curve's color goes by its position
+  (`pair_index`), so both lines of a pair, its label strip and its panel
+  row always match. The label text stays dark on a light box and the color
+  is a strip beside it, so any chosen color stays readable. Settings keys
+  are `curve_color_1` … `curve_color_4`; the older single `line_color` key
+  is still read as the color of curve 1.
 - **Cobb labels are re-placed on zoom.** They are positioned in screen
   pixels, so `ImageCanvas.view_changed` (emitted on zoom in, zoom out and
   fit) is connected to `OverlayLayer.reposition_labels()`, which reuses the

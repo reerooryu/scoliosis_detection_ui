@@ -31,9 +31,12 @@ COLOR_VERTEBRA_OUTLINE = (0, 120, 215, 180)     # Blue, semi-transparent
 COLOR_CORRIDOR_FILL = (0, 204, 150, 60)         # Emerald Green, low opacity (alpha = 60/255)
 COLOR_KEYPOINT_CENTER = (255, 193, 7, 190)      # Amber/Yellow for center -- slightly translucent
 COLOR_KEYPOINT_CORNER = (220, 53, 69, 190)      # Red for corner points -- slightly translucent
-COLOR_COBB_LINE = (255, 87, 34, 200)            # Deep Orange for Cobb angle lines
 COLOR_COBB_TEXT_BG = (255, 255, 255, 220)       # White for text background
 COLOR_CSVL_LINE = (233, 30, 99, 210)            # Magenta/pink for the CSVL reference line
+
+# Color of each curve's Cobb lines and label, top curve first. Editable in
+# Settings. A fifth curve reuses the first color.
+CURVE_COLORS = ["#ff5722", "#ffd600", "#00e5ff", "#b388ff"]   # orange, yellow, cyan, violet
 
 # Landmark handle radius in screen pixels (same size at any zoom level).
 HANDLE_RADIUS = 4.0
