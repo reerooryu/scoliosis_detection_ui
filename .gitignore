@@ -249,3 +249,16 @@ blueprint.md
 # Saved projects and exported results can contain patient X-rays and data
 *.sdproj
 scoliosis_assessment_*.json
+
+# ---------------------------------------------------------------------------
+# Local only -- not part of the shared repo
+# ---------------------------------------------------------------------------
+
+# Notes for AI coding assistants
+.agents/
+
+# Retired wizard UI, replaced by modules/main_window.py. Nothing imports
+# these, and they fail to import anyway (they need a canvas class that was
+# removed).
+modules/wizard.py
+modules/pages.py

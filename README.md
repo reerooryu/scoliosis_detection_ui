@@ -188,7 +188,6 @@ graph TD
 | `modules/settings_dialog.py` | Settings dialog. |
 | `modules/validation.py` | Model Validation dialog. |
 | `modules/theme.py` | Dark theme for the toolbar and workspace. |
-| `modules/wizard.py`, `modules/pages.py` | Old wizard UI. Not used. |
 
 ## Build a standalone app (optional)
 
