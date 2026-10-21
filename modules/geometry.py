@@ -200,6 +200,41 @@ def compute_csvl_x(detections):
     return detections[idx]["keypoints"][0][0]
 
 
+def curve_apex(detections, upper_index, lower_index, main_apex=None):
+    """Apex of one curve. Returns (apex_index, distance_px), or (None, 0.0).
+
+    If the whole-spine apex (main_apex, furthest from the CSVL) lies inside
+    this curve, it is this curve's apex, so the two never disagree.
+    Otherwise the apex is the vertebra between the two end vertebrae (not
+    an end vertebra itself) whose center lies furthest from the straight
+    line joining the end vertebrae's centers. That line is used instead of
+    the CSVL because a curve above or below the main one is often off to
+    one side: measured from the CSVL, its most deviated vertebra would just
+    be the end vertebra next to the main curve.
+    """
+    lo, hi = sorted((upper_index, lower_index))
+    if lo < 0 or hi >= len(detections) or hi - lo < 2:
+        return None, 0.0
+    x1, y1 = detections[lo]["keypoints"][0][:2]
+    x2, y2 = detections[hi]["keypoints"][0][:2]
+    length = math.hypot(x2 - x1, y2 - y1)
+    if length == 0:
+        return None, 0.0
+    def distance(i):
+        x0, y0 = detections[i]["keypoints"][0][:2]
+        return abs((x2 - x1) * (y1 - y0) - (x1 - x0) * (y2 - y1)) / length
+
+    if main_apex is not None and lo < main_apex < hi:
+        return main_apex, distance(main_apex)
+
+    best_idx, best_dist = None, -1.0
+    for i in range(lo + 1, hi):
+        dist = distance(i)
+        if dist > best_dist:
+            best_idx, best_dist = i, dist
+    return best_idx, best_dist
+
+
 def compute_apex(detections, csvl_x):
     """Returns (apex_index, deviation_px): the vertebra whose center is
     furthest sideways from the CSVL."""

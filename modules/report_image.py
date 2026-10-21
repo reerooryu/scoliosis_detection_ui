@@ -9,7 +9,7 @@ from datetime import datetime
 from PySide6.QtCore import Qt, QPointF, QRectF
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPen, QPolygonF
 
-from modules.geometry import vertebra_levels
+from modules.geometry import curve_apex, vertebra_levels
 from config import (
     COLOR_CSVL_LINE, COLOR_VERTEBRA_OUTLINE, CURVE_COLORS,
     KP_BOTTOM_LEFT, KP_BOTTOM_RIGHT, KP_CENTER, KP_TOP_LEFT, KP_TOP_RIGHT,
@@ -100,7 +100,7 @@ def _draw_overlay(painter, engine, colors, img_w, img_h, s):
             _point(kp[KP_BOTTOM_RIGHT]), _point(kp[KP_BOTTOM_LEFT]),
         ]))
         left = min(kp[KP_TOP_LEFT][0], kp[KP_BOTTOM_LEFT][0])
-        number_tags.append((_level(levels, index), left - 5 * s, kp[KP_CENTER][1]))
+        number_tags.append((index, (_level(levels, index), left - 5 * s, kp[KP_CENTER][1])))
 
     # CSVL.
     csvl_x = engine.get_csvl_x()
@@ -131,24 +131,46 @@ def _draw_overlay(painter, engine, colors, img_w, img_h, s):
         mid_y = (u_kp[KP_TOP_LEFT][1] + l_kp[KP_BOTTOM_LEFT][1]) / 2.0
         labels.append((color, pair.get("cobb_angle", 0.0), min(xs), max(xs), mid_y))
 
+    # Level names. Each curve's apex is filled with the curve's color; the
+    # whole-spine apex (furthest from the CSVL) is also drawn larger.
+    main_apex, _ = engine.get_apex()
+    apex_colors = {}
+    for idx, pair in enumerate(engine.get_angle_pairs()):
+        apex_idx, _ = curve_apex(detections, pair.get("upper_detection_index", -1),
+                                 pair.get("lower_detection_index", -1), main_apex)
+        if apex_idx is not None:
+            apex_colors[apex_idx] = QColor(colors[idx % len(colors)])
+
     number_font = _font(9 * s, bold=True)
-    for text, right_x, center_y in number_tags:
-        _draw_number_tag(painter, text, right_x, center_y, number_font, s)
+    main_apex_font = _font(11.5 * s, bold=True)
+    for index, (text, right_x, center_y) in number_tags:
+        font = main_apex_font if index == main_apex else number_font
+        if index in apex_colors:
+            fill = QColor(apex_colors[index])
+            fill.setAlpha(235)
+            ink = QColor("#111111") if fill.lightness() > 140 else QColor("white")
+            _draw_number_tag(painter, text, right_x, center_y, font, s, fill, ink)
+        elif index == main_apex:
+            _draw_number_tag(painter, text, right_x, center_y, font, s, QColor(255, 255, 255, 235), QColor("#111111"))
+        else:
+            _draw_number_tag(painter, text, right_x, center_y, font, s)
     _draw_curve_labels(painter, labels, img_w, img_h, s)
 
 
-def _draw_number_tag(painter, text, right_x, center_y, font, s):
-    """Small, faint vertebra level name, right-aligned to right_x."""
+def _draw_number_tag(painter, text, right_x, center_y, font, s,
+                     fill=QColor(0, 0, 0, 110), ink=QColor(255, 255, 255, 200)):
+    """Small vertebra level name on a box, right-aligned to right_x. Faint
+    by default; apex vertebrae pass their own colors."""
     metrics = QFontMetricsF(font)
     pad = 2 * s
     w = metrics.horizontalAdvance(text) + 2 * pad
     h = metrics.height()
     box = QRectF(right_x - w, center_y - h / 2, w, h)
     painter.setPen(Qt.NoPen)
-    painter.setBrush(QColor(0, 0, 0, 110))
+    painter.setBrush(fill)
     painter.drawRoundedRect(box, 2 * s, 2 * s)
     painter.setFont(font)
-    painter.setPen(QColor(255, 255, 255, 200))
+    painter.setPen(ink)
     painter.drawText(box, Qt.AlignCenter, text)
 
 
@@ -199,7 +221,7 @@ class _Panel:
         self.s = s
         self.pad = 16 * s
         label, big, angle = _font(11 * s), _font(30 * s, bold=True), _font(15 * s, bold=True)
-        small, foot = _font(11 * s), _font(9.5 * s)
+        small, small_bold, foot = _font(11 * s), _font(11 * s, bold=True), _font(9.5 * s)
 
         pairs = engine.get_angle_pairs()
         apex_idx, deviation = engine.get_apex()
@@ -212,18 +234,29 @@ class _Panel:
             self.top.append([("text", "Cobb", label, TEXT_MUTED)])
             self.top.append([("text", "{:.1f}°".format(engine.get_selected_cobb_angle()), big, TEXT_MAIN)])
             self.top.append(None)
+            detections = engine.get_detections()
             for i, pair in enumerate(pairs):
-                self.top.append([
+                row = [
                     ("chip", colors[i % len(colors)], angle),
                     ("text", "{:.1f}°".format(pair.get("cobb_angle", 0.0)), angle, TEXT_MAIN),
                     ("text", "  {}–{}".format(_level(levels, pair["upper_detection_index"]),
                                                _level(levels, pair["lower_detection_index"])), small, TEXT_MUTED),
-                ])
+                ]
+                curve_apex_idx, _ = curve_apex(detections, pair["upper_detection_index"],
+                                               pair["lower_detection_index"], apex_idx)
+                if curve_apex_idx is not None:
+                    row.append(("text", "  apex ", small, TEXT_MUTED))
+                    if curve_apex_idx == apex_idx:
+                        row.append(("text", _level(levels, curve_apex_idx), small_bold, TEXT_MAIN))
+                    else:
+                        row.append(("text", _level(levels, curve_apex_idx), small, TEXT_MUTED))
+                self.top.append(row)
         else:
             self.top.append([("text", "No curve above 10°", angle, TEXT_MAIN)])
         self.top.append(None)
         if apex_idx is not None:
-            self.top.append([("text", "Apex {}".format(_level(levels, apex_idx)), small, TEXT_MUTED)])
+            self.top.append([("text", "Apex ", small, TEXT_MUTED),
+                             ("text", _level(levels, apex_idx), small_bold, TEXT_MAIN)])
             self.top.append([("text", "CSVL {:.0f} px".format(deviation), small, TEXT_MUTED)])
         seconds = engine.get_processing_time()
         if seconds is not None:

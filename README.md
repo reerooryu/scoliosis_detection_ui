@@ -280,3 +280,4 @@ The largest curve is found first, from every possible pair of vertebrae. Curves 
 
 - **CSVL**: a vertical line through the center of the lowest detected vertebra.
 - **Apex**: the vertebra whose center is furthest sideways from the CSVL. Its distance from the CSVL is the CSVL Deviation, in pixels.
+- **Apex of each curve** (exported JPG): the curve containing the whole-spine apex above uses it, shown in bold. For the other curves, the vertebra between the end vertebrae that lies furthest from the straight line joining their centers.

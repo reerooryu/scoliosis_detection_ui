@@ -10,7 +10,7 @@ import pytest
 from modules.geometry import (
     MIN_COBB_ANGLE, MIN_CURVE_SPAN,
     cobb_angle_between_obliques, compute_apex, compute_csvl_x,
-    curve_start_index, find_cobb_curves, oblique_angle, select_angle_pairs,
+    curve_apex, curve_start_index, find_cobb_curves, oblique_angle, select_angle_pairs,
     vertebra_levels,
 )
 
@@ -226,6 +226,40 @@ def test_csvl_runs_through_the_lowest_vertebra():
 def test_apex_is_furthest_from_the_csvl():
     detections = [_det(100, 10), _det(180, 50), _det(120, 90)]
     assert compute_apex(detections, 120) == (1, 60)
+
+
+def test_curve_apex_is_furthest_from_the_end_vertebrae_line():
+    # End vertebrae at x=0; the middle one bulges furthest.
+    detections = [_det(0, 0), _det(10, 10), _det(25, 20), _det(12, 30), _det(0, 40)]
+    assert curve_apex(detections, 0, 4) == (2, pytest.approx(25.0))
+
+
+def test_curve_apex_is_never_an_end_vertebra():
+    # The lower end vertebra is far off to the side (as next to a larger
+    # curve), but the apex must lie between the ends.
+    detections = [_det(0, 0), _det(5, 10), _det(8, 20), _det(200, 30)]
+    apex, _ = curve_apex(detections, 0, 3)
+    assert apex in (1, 2)
+
+
+def test_curve_apex_of_each_sample_curve_lies_inside_it():
+    detections = load_sample()["detections"]
+    for u, l, _ in EXPECTED_CURVES:
+        apex, distance = curve_apex(detections, u, l)
+        assert u < apex < l
+        assert distance > 0
+
+
+def test_whole_spine_apex_wins_inside_its_curve():
+    detections = [_det(0, 0), _det(10, 10), _det(25, 20), _det(12, 30), _det(0, 40)]
+    assert curve_apex(detections, 0, 4, main_apex=3)[0] == 3     # inside: used
+    assert curve_apex(detections, 0, 4, main_apex=4)[0] == 2     # an end vertebra: ignored
+    assert curve_apex(detections, 0, 4, main_apex=None)[0] == 2
+
+
+def test_curve_apex_needs_a_vertebra_between_the_ends():
+    detections = [_det(0, 0), _det(5, 10)]
+    assert curve_apex(detections, 0, 1) == (None, 0.0)
 
 
 def test_csvl_and_apex_with_no_detections():
