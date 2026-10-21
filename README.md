@@ -80,6 +80,44 @@ ls model/model_t001_6_effb5_mask_kp_2cls
 
 It should list `model_final_run.pth`.
 
+## Quick start (after installing)
+
+Copy the block for your computer into a terminal. It goes to the folder, activates the virtual environment and starts the program. If you cloned the code somewhere other than your home folder, change the `cd` line.
+
+**App** on macOS (Terminal):
+
+```
+cd ~/scoliosis_detection_ui
+source .venv/bin/activate
+python app.py
+```
+
+**App** on Windows (PowerShell):
+
+```
+cd $HOME\scoliosis_detection_ui
+Set-ExecutionPolicy Bypass -Scope Process -Force
+.venv\Scripts\Activate.ps1
+python app.py
+```
+
+**Server** on macOS (keeps the Mac awake while it runs; stop it with `Ctrl+C`):
+
+```
+cd ~/scoliosis_detection_ui
+source .venv/bin/activate
+caffeinate -i python server.py
+```
+
+**Server** on Windows:
+
+```
+cd $HOME\scoliosis_detection_ui
+Set-ExecutionPolicy Bypass -Scope Process -Force
+.venv\Scripts\Activate.ps1
+python server.py
+```
+
 ## Run
 
 ### Step 1. Start the server
