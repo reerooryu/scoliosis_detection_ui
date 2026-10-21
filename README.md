@@ -145,7 +145,7 @@ On macOS, use `Cmd` instead of `Ctrl`.
 - **Edit**: drag landmarks in Edit Mode. When you release a landmark, the curves are chosen again by the same rules the server uses. Undo, Redo, and Reset Edits to return to the AI result.
 - **Measurements**: Primary Cobb Angle, one row per curve (up to four), Apex, CSVL Deviation, Vertebrae, Processing Time.
 - **Save / Open Project**: a `.sdproj` file stores the image, your edits and the original AI result, so you can continue later without running the AI again.
-- **Export**: raw JSON, and a JPG of the X-ray with the overlay and a results panel on the right. Files are named after the image with a timestamp.
+- **Export**: raw JSON, and a JPG of the X-ray with the overlay and a results panel on the right. Files are named after the image with a timestamp. The JPG names vertebrae by level, counted up from the lowest one as L5 (L5 ... L1, T12 ... T1, C7 ... C1; the top may be off the image).
 - **Processing time**: the full round trip (upload, model, reply). Shown in the panel, and saved in the JSON (`processing_time_seconds`), the JPG and project files.
 - **Settings**: server address, the color of each curve, default export folder.
 - **Model Validation** (Tools menu): compares a prediction JSON with a ground-truth label JSON. For the ML team.
@@ -156,7 +156,7 @@ Not built yet: PDF Report and CSV export (shown as "coming soon" in the Export d
 
 - Input is JPG, JPEG or PNG only. DICOM is not supported.
 - CSVL deviation is in pixels, not mm. The image carries no pixel spacing.
-- Vertebrae are numbered from the top, starting at 0. They are not named (T1, L1, ...).
+- In the app, vertebrae are numbered from the top, starting at 0. The exported JPG names them by level instead, assuming the lowest one is L5.
 - Cobb angles are reported between 0 and 90 degrees.
 - Curves are measured from the marker vertebra (detection class 1) downward. Vertebrae above it are not used.
 - The server does not mark the sacrum, so the CSVL is drawn through the lowest detected vertebra.

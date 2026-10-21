@@ -11,6 +11,7 @@ from modules.geometry import (
     MIN_COBB_ANGLE, MIN_CURVE_SPAN,
     cobb_angle_between_obliques, compute_apex, compute_csvl_x,
     curve_start_index, find_cobb_curves, oblique_angle, select_angle_pairs,
+    vertebra_levels,
 )
 
 from synthetic_spine import EXPECTED_CURVES, MARKER_INDEX, TILTS, make_result
@@ -186,6 +187,27 @@ def test_select_angle_pairs_format():
         assert p["upper_oblique"] == upper[p["upper_detection_index"]]
         assert p["lower_oblique"] == lower[p["lower_detection_index"]]
         assert p["cobb_angle"] == pytest.approx(cobb_angle_between_obliques(p["upper_oblique"], p["lower_oblique"]))
+
+
+# ---------------------------------------------------------------------------
+# Level names
+# ---------------------------------------------------------------------------
+
+def test_levels_are_counted_up_from_l5():
+    levels = vertebra_levels(23)      # the sample spine: C2 at the top
+    assert levels[-1] == "L5"
+    assert levels[18] == "L1"
+    assert levels[17] == "T12"
+    assert levels[6] == "T1"
+    assert levels[MARKER_INDEX] == "C7"
+    assert levels[0] == "C2"
+
+
+def test_full_spine_and_extra_vertebrae():
+    assert vertebra_levels(24)[0] == "C1"
+    assert vertebra_levels(25)[:2] == [None, "C1"]    # above C1: no name
+    assert vertebra_levels(3) == ["L3", "L4", "L5"]   # only the lumbar spine shown
+    assert vertebra_levels(0) == []
 
 
 # ---------------------------------------------------------------------------

@@ -155,6 +155,29 @@ def select_angle_pairs(upper_tilts, lower_tilts, start_index=0):
 
 
 # ---------------------------------------------------------------------------
+# Vertebra level names (C1-L5)
+# ---------------------------------------------------------------------------
+
+LEVELS = (
+    [f"C{n}" for n in range(1, 8)]
+    + [f"T{n}" for n in range(1, 13)]
+    + [f"L{n}" for n in range(1, 6)]
+)   # C1 ... C7, T1 ... T12, L1 ... L5: top to bottom
+
+
+def vertebra_levels(count):
+    """Level names for count vertebrae listed top to bottom, counted from the
+    bottom: the lowest is L5, then L4 ... L1, T12 ... T1, C7 ... C1. The top
+    of the spine may be off the image, so fewer than 24 is normal. Any
+    vertebra above C1 (more than 24 found) gets None."""
+    names = []
+    for index in range(count):
+        position = len(LEVELS) - count + index
+        names.append(LEVELS[position] if position >= 0 else None)
+    return names
+
+
+# ---------------------------------------------------------------------------
 # CSVL (Central Sacral Vertical Line) and apex vertebra
 # ---------------------------------------------------------------------------
 #

@@ -9,6 +9,7 @@ from datetime import datetime
 from PySide6.QtCore import Qt, QPointF, QRectF
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPen, QPolygonF
 
+from modules.geometry import vertebra_levels
 from config import (
     COLOR_CSVL_LINE, COLOR_VERTEBRA_OUTLINE, CURVE_COLORS,
     KP_BOTTOM_LEFT, KP_BOTTOM_RIGHT, KP_CENTER, KP_TOP_LEFT, KP_TOP_RIGHT,
@@ -60,6 +61,13 @@ def _point(keypoint):
     return QPointF(keypoint[0], keypoint[1])
 
 
+def _level(levels, index):
+    """Level name of a vertebra (e.g. "T9"), or "?" if it can't be named."""
+    if index is None or not (0 <= index < len(levels)) or levels[index] is None:
+        return "?"
+    return levels[index]
+
+
 # ---------------------------------------------------------------------------
 # Overlay on the X-ray (kept light so the X-ray stays readable)
 # ---------------------------------------------------------------------------
@@ -77,8 +85,9 @@ def _extended_line(p1, p2, extend):
 
 def _draw_overlay(painter, engine, colors, img_w, img_h, s):
     detections = engine.get_detections()
+    levels = vertebra_levels(len(detections))
 
-    # Vertebra outlines. Their numbers are drawn later, on top of the lines.
+    # Vertebra outlines. Their level names are drawn later, on top of the lines.
     number_tags = []
     painter.setPen(QPen(QColor(*COLOR_VERTEBRA_OUTLINE), 1.0 * s))
     painter.setBrush(QColor(0, 120, 215, 12))
@@ -91,7 +100,7 @@ def _draw_overlay(painter, engine, colors, img_w, img_h, s):
             _point(kp[KP_BOTTOM_RIGHT]), _point(kp[KP_BOTTOM_LEFT]),
         ]))
         left = min(kp[KP_TOP_LEFT][0], kp[KP_BOTTOM_LEFT][0])
-        number_tags.append(("#{}".format(index), left - 5 * s, kp[KP_CENTER][1]))
+        number_tags.append((_level(levels, index), left - 5 * s, kp[KP_CENTER][1]))
 
     # CSVL.
     csvl_x = engine.get_csvl_x()
@@ -129,7 +138,7 @@ def _draw_overlay(painter, engine, colors, img_w, img_h, s):
 
 
 def _draw_number_tag(painter, text, right_x, center_y, font, s):
-    """Small, faint vertebra number, right-aligned to right_x."""
+    """Small, faint vertebra level name, right-aligned to right_x."""
     metrics = QFontMetricsF(font)
     pad = 2 * s
     w = metrics.horizontalAdvance(text) + 2 * pad
@@ -194,6 +203,7 @@ class _Panel:
 
         pairs = engine.get_angle_pairs()
         apex_idx, deviation = engine.get_apex()
+        levels = vertebra_levels(len(engine.get_detections()))
 
         # Each row is a list of segments: ("text", text, font, color) or
         # ("chip", color, font). None is a small gap.
@@ -206,13 +216,14 @@ class _Panel:
                 self.top.append([
                     ("chip", colors[i % len(colors)], angle),
                     ("text", "{:.1f}°".format(pair.get("cobb_angle", 0.0)), angle, TEXT_MAIN),
-                    ("text", "  #{}–#{}".format(pair["upper_detection_index"], pair["lower_detection_index"]), small, TEXT_MUTED),
+                    ("text", "  {}–{}".format(_level(levels, pair["upper_detection_index"]),
+                                               _level(levels, pair["lower_detection_index"])), small, TEXT_MUTED),
                 ])
         else:
             self.top.append([("text", "No curve above 10°", angle, TEXT_MAIN)])
         self.top.append(None)
         if apex_idx is not None:
-            self.top.append([("text", "Apex #{}".format(apex_idx), small, TEXT_MUTED)])
+            self.top.append([("text", "Apex {}".format(_level(levels, apex_idx)), small, TEXT_MUTED)])
             self.top.append([("text", "CSVL {:.0f} px".format(deviation), small, TEXT_MUTED)])
         seconds = engine.get_processing_time()
         if seconds is not None:
@@ -224,6 +235,7 @@ class _Panel:
         self.foot_font = foot
         self.bottom = [
             [("text", datetime.now().strftime("%Y-%m-%d %H:%M"), foot, TEXT_MUTED)],
+            [("text", "Levels counted up from L5", foot, TEXT_MUTED)],
             [("text", "AI-assisted · verify", foot, TEXT_MUTED)],
         ]
 
