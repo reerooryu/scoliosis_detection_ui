@@ -35,8 +35,11 @@ Windows (PowerShell):
 
 ```
 python -m venv .venv
+Set-ExecutionPolicy Bypass -Scope Process
 .venv\Scripts\Activate.ps1
 ```
+
+Without the second line, Windows blocks the activation script. It only applies to this PowerShell window, so run it again in every new window before activating.
 
 ### Step 3. Install the app
 
@@ -86,7 +89,7 @@ To check it is up, open http://127.0.0.1:4000/health in a browser. You should se
 
 ### Step 2. Start the app
 
-In a second terminal, with the virtual environment activated:
+In a second terminal, with the virtual environment activated (on Windows, run `Set-ExecutionPolicy Bypass -Scope Process` first):
 
 ```
 python app.py
