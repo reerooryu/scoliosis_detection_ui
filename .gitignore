@@ -261,6 +261,10 @@ scoliosis_assessment_*.jpg
 # Notes for AI coding assistants
 .agents/
 
+# Test images and the sample server result: kept on this computer only
+/test_img/
+/test_json/
+
 # Retired wizard UI, replaced by modules/main_window.py. Nothing imports
 # these, and they fail to import anyway (they need a canvas class that was
 # removed).
