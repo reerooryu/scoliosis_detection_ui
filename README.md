@@ -62,7 +62,8 @@ python -m pip install --no-build-isolation "git+https://github.com/facebookresea
 ```
 
 - Run the two commands in this order. The first one also installs PyTorch. Detectron2's installer needs it, which is why `--no-build-isolation` is required.
-- Detectron2 is built from source, so a C++ compiler must be installed (Xcode Command Line Tools on macOS, Visual Studio Build Tools on Windows).
+- Detectron2 is built from source, so a C++ compiler must be installed first. macOS: Xcode Command Line Tools (`xcode-select --install`). Windows: [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the **Desktop development with C++** workload; open a new PowerShell window after installing. Without it the install stops with `Microsoft Visual C++ 14.0 or greater is required`.
+- Optional: `python -m pip install ninja` first makes the Detectron2 build much faster.
 - NVIDIA GPU on Windows: the default PyTorch there is CPU-only. Before the two commands above, install the CUDA build with the command from https://pytorch.org/get-started/locally/.
 
 ### Step 5. Add the model weights
