@@ -166,7 +166,8 @@ graph TD
     Session --> Engine["model_mock.py - ScoliosisModelEngine"]
     Engine --> Geometry["geometry.py - angle math"]
     Parser -->|POST image| Server["server.py - FastAPI inference server"]
-    Server --> Geometry
+    Server --> Post["postprocess.py - model output to result"]
+    Post --> Geometry
 ```
 
 | File | Purpose |
@@ -174,6 +175,7 @@ graph TD
 | `app.py` | Starts the app. |
 | `config.py` | Constants: window size, server URL, keypoint order, colors. |
 | `server.py` | Inference server: `POST /predict`, `GET /health`. |
+| `modules/postprocess.py` | Turns the model output into the result: scaling, filtering, angles, curves. No Detectron2 needed. |
 | `modules/main_window.py` | Main window, menus, toolbar, measurement panel. |
 | `modules/controller.py` | Workflow: submit, retry, edits, project save and open. |
 | `modules/session.py` | State for the loaded image. |
@@ -181,13 +183,23 @@ graph TD
 | `modules/canvas.py` | Image viewer (pan, zoom, fit). |
 | `modules/overlay.py` | Landmarks, Cobb lines and labels, CSVL. |
 | `modules/model_mock.py` | `ScoliosisModelEngine`: holds the result, recalculates angles, undo/redo. |
-| `modules/geometry.py` | Angle, CSVL and apex math. Also used by `server.py`. |
+| `modules/geometry.py` | Angle, curve, CSVL and apex math. Used by the app and the server. |
 | `modules/parser.py` | Sends the image to the server and checks the reply. |
 | `modules/project.py` | Reads and writes `.sdproj` files. |
 | `modules/export.py` | Export dialog. |
 | `modules/settings_dialog.py` | Settings dialog. |
 | `modules/validation.py` | Model Validation dialog. |
 | `modules/theme.py` | Dark theme for the toolbar and workspace. |
+| `tests/` | Tests for the math and for project save and open. |
+
+## Run the tests
+
+```
+pip install pytest
+pytest
+```
+
+The tests need no GPU, model or Detectron2. GitHub runs them on every push (Actions tab).
 
 ## Build a standalone app (optional)
 
@@ -223,23 +235,11 @@ Each vertebra has 5 keypoints:
 | 3 | Bottom-left corner |
 | 4 | Bottom-right corner |
 
-### Endplate tilt (oblique angle)
+### Endplate tilt
 
-- Upper tilt: from point 1 to point 2.
-- Lower tilt: from point 3 to point 4.
+The tilt is the angle of the line through an endplate's two corners: points 1 and 2 for the upper endplate, points 3 and 4 for the lower. It is between -90 and 90 degrees. Positive means the right corner (in the image) is lower. The order of the two corners does not matter.
 
-The tilt is not a plain `atan2(dy, dx)`. The app (`modules/geometry.py::oblique_angle`) uses the same rules as the server (`server.py::cal_oblique01`), and the two must stay identical:
-
-```
-dx = x1 - x2, dy = y1 - y2
- dx == 0, dy == 0  ->   0 degrees
- dx == 0, dy >  0  -> -90 degrees
- dx == 0, dy <  0  -> +90 degrees
- dy == 0           ->   0 degrees
- dx <  0           -> atan(dy / dx)
- dx >  0, dy >  0  -> -90 degrees - atan(dy / dx)
- dx >  0, dy <  0  -> +90 degrees + atan(dy / dx)
-```
+Server and app both use `modules/geometry.py::oblique_angle`, so their angles always match.
 
 ### Cobb angle
 

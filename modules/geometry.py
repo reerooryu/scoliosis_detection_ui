@@ -11,35 +11,21 @@ import math
 # Endplate tilt ("oblique angle") and Cobb angle
 # ---------------------------------------------------------------------------
 #
-# oblique_angle() must give exactly the same results as cal_oblique01() in
-# server.py. It is not a plain atan2: the two differ when the "left" corner
-# lies to the right of the "right" corner. The app recalculates every angle
-# with this function, so any difference would change the reported angles.
+# The server and the app both use oblique_angle(), so their angles match.
 
 def oblique_angle(p1, p2):
-    """Endplate tilt in degrees from corner p1 (left) to corner p2 (right).
-    Same rules as cal_oblique01 in server.py."""
-    x1_, y1_ = p1[0], p1[1]
-    x2_, y2_ = p2[0], p2[1]
-    x_x = x1_ - x2_
-    y_y = y1_ - y2_
-    if x_x == 0 and y_y == 0:
-        return 0.0
-    if x_x == 0 and y_y > 0:
-        return -90.0
-    if x_x == 0 and y_y < 0:
-        return 90.0
-    if x_x < 0 and y_y == 0:
-        return 0.0
-    if x_x > 0 and y_y == 0:
-        return 0.0
-    if (x_x < 0 and y_y > 0) or (x_x < 0 and y_y < 0):
-        return float(math.degrees(math.atan(y_y / x_x)))
-    if x_x > 0 and y_y > 0:
-        return float(-90.0 - math.degrees(math.atan(y_y / x_x)))
-    if x_x > 0 and y_y < 0:
-        return float(90.0 + math.degrees(math.atan(y_y / x_x)))
-    return 0.0
+    """Endplate tilt in degrees, from -90 to 90, of the line through corners
+    p1 and p2. Positive means the corner on the image's right is lower.
+
+    The order of the two corners does not matter. (The formula this replaced
+    was off by up to 90 degrees when the "left" corner lay to the right of
+    the "right" one.)
+    """
+    dx = p2[0] - p1[0]
+    dy = p2[1] - p1[1]
+    if dx == 0:
+        return 0.0 if dy == 0 else 90.0
+    return math.degrees(math.atan(dy / dx))
 
 
 def cobb_angle_between_obliques(first_oblique, second_oblique):
