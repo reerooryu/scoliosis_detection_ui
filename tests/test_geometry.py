@@ -1,9 +1,8 @@
 # Tests for modules/geometry.py: endplate tilt, Cobb angle, curve choice,
-# CSVL and apex. Pure math, so no Qt, GPU or Detectron2 is needed.
+# CSVL and apex. Pure math, so no Qt, GPU or Detectron2 is needed. The
+# sample spine is made up (tests/synthetic_spine.py).
 
-import json
 import math
-import os
 import random
 
 import pytest
@@ -14,12 +13,11 @@ from modules.geometry import (
     curve_start_index, find_cobb_curves, oblique_angle, select_angle_pairs,
 )
 
-SAMPLE_PATH = os.path.join(os.path.dirname(__file__), "..", "test_json", "test_output.json")
+from synthetic_spine import EXPECTED_CURVES, MARKER_INDEX, TILTS, make_result
 
 
 def load_sample():
-    with open(SAMPLE_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return make_result()
 
 
 def tilts(detections):
@@ -100,11 +98,10 @@ def test_same_as_original_formula_when_corners_are_in_order():
         assert oblique_angle(p1, p2) == pytest.approx(_original_formula(p1, p2), abs=1e-9)
 
 
-def test_sample_tilts_match_the_server_values():
-    for det in load_sample()["detections"]:
-        kp = det["keypoints"]
-        assert oblique_angle(kp[1], kp[2]) == pytest.approx(det["upper_oblique"], abs=1e-9)
-        assert oblique_angle(kp[3], kp[4]) == pytest.approx(det["lower_oblique"], abs=1e-9)
+def test_sample_tilts_match_the_designed_tilts():
+    upper, lower = tilts(load_sample()["detections"])
+    assert upper == pytest.approx(TILTS, abs=1e-9)
+    assert lower == pytest.approx(TILTS, abs=1e-9)
 
 
 # ---------------------------------------------------------------------------
@@ -138,9 +135,10 @@ def test_sample_curves():
     detections = load_sample()["detections"]
     upper, lower = tilts(detections)
     start = curve_start_index([d["class"] for d in detections])
+    assert start == MARKER_INDEX
     curves = find_cobb_curves(upper, lower, start)
-    assert [(u, l) for u, l, _ in curves] == [(5, 11), (11, 18), (18, 22)]
-    assert [round(a, 1) for _, _, a in curves] == [20.6, 64.1, 38.9]
+    assert [(u, l) for u, l, _ in curves] == [(u, l) for u, l, _ in EXPECTED_CURVES]
+    assert [a for _, _, a in curves] == pytest.approx([a for _, _, a in EXPECTED_CURVES], abs=1e-6)
 
 
 def test_curve_rules_hold_on_sample():

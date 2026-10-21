@@ -14,10 +14,8 @@ SUPPORTED_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
 INFERENCE_API_URL = "http://127.0.0.1:4000/predict"
 INFERENCE_TIMEOUT = 120  # seconds
 
-# Paths are built from this file's folder, not the current working directory.
-# The test JSON is a sample server result, kept for manual testing.
+# This file's folder, so paths do not depend on the current working directory.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_TEST_JSON_PATH = os.path.join(BASE_DIR, "test_json", "test_output.json")
 
 # Keypoint order within each vertebra.
 KP_CENTER = 0

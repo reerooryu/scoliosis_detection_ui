@@ -4,7 +4,7 @@
 import copy
 import json
 import os
-from config import DEFAULT_TEST_JSON_PATH, KP_TOP_LEFT, KP_TOP_RIGHT, KP_BOTTOM_LEFT, KP_BOTTOM_RIGHT
+from config import KP_TOP_LEFT, KP_TOP_RIGHT, KP_BOTTOM_LEFT, KP_BOTTOM_RIGHT
 from modules.geometry import (
     cobb_angle_between_obliques, compute_csvl_x, compute_apex, oblique_angle,
     curve_start_index, select_angle_pairs,
@@ -14,18 +14,19 @@ from modules.geometry import (
 UNDO_HISTORY_LIMIT = 50
 
 class ScoliosisModelEngine:
-    def __init__(self, json_path=DEFAULT_TEST_JSON_PATH, autoload=True):
+    def __init__(self, json_path=None, autoload=False):
         self.json_path = json_path
         self.data = None
         # The AI's unedited result, kept so "Reset Edits" can restore it.
         self._original_data = None
         self._undo_stack = []
         self._redo_stack = []
-        if autoload:
+        if autoload and json_path:
             self.load_data()
 
     def load_data(self):
-        """Load the bundled test JSON. For manual testing only; the app uses load_from_dict()."""
+        """Load a saved result JSON from json_path. For manual testing only;
+        the app uses load_from_dict()."""
         if not os.path.exists(self.json_path):
             raise FileNotFoundError(f"Model mock data file not found at {self.json_path}")
 

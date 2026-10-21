@@ -1,7 +1,6 @@
 # Save a .sdproj project and open it again: everything must come back
 # unchanged, including manual edits and the AI's original result.
 
-import json
 import os
 
 import pytest
@@ -9,7 +8,7 @@ import pytest
 from modules.model_mock import ScoliosisModelEngine
 from modules.project import PROJECT_EXTENSION, ProjectLoadError, read_project, write_project
 
-SAMPLE_PATH = os.path.join(os.path.dirname(__file__), "..", "test_json", "test_output.json")
+from synthetic_spine import make_result
 
 # Any bytes work: a project stores the image as-is, without decoding it.
 IMAGE_BYTES = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
@@ -18,8 +17,7 @@ IMAGE_BYTES = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
 def edited_engine():
     """A loaded result with one landmark moved, so it differs from the AI's."""
     engine = ScoliosisModelEngine(autoload=False)
-    with open(SAMPLE_PATH, "r", encoding="utf-8") as f:
-        engine.load_from_dict(json.load(f))
+    engine.load_from_dict(make_result())
     engine.capture_baseline()
     x, y = engine.get_detections()[10]["keypoints"][1][:2]
     engine.update_keypoint(10, 1, x + 12, y - 7)

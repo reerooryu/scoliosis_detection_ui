@@ -251,6 +251,9 @@ blueprint.md
 scoliosis_assessment_*.json
 scoliosis_assessment_*.jpg
 
+# Reader-study folders ("วัด <date>"): patient films exported from PACS
+/วัด */
+
 # ---------------------------------------------------------------------------
 # Local only -- not part of the shared repo
 # ---------------------------------------------------------------------------
