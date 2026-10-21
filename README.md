@@ -99,7 +99,7 @@ Open Settings (`Ctrl+,`) and set **Inference API URL** to `http://<server-addres
 ### Step 4. Analyse an X-ray
 
 1. Drag a JPG or PNG onto the Load page, or use File → Open Image.
-2. Click **Submit**. The landmarks, Cobb lines and measurements appear when the server answers.
+2. Click **Submit** or press `Enter`. The landmarks, Cobb lines and measurements appear when the server answers.
 3. To correct a landmark, turn on Edit Mode (`Ctrl+E`) and drag it. The angles update as you drag.
 4. Export the result (`Ctrl+S`), or save a project (`Ctrl+Shift+S`) to continue later.
 
@@ -111,6 +111,7 @@ On macOS, use `Cmd` instead of `Ctrl`.
 
 | Action | Shortcut |
 |--|--|
+| Submit image (Load page) | `Enter` |
 | Open Image | `Ctrl+O` |
 | Open Project | `Ctrl+Shift+O` |
 | Save Project | `Ctrl+Shift+S` |
@@ -126,6 +127,15 @@ On macOS, use `Cmd` instead of `Ctrl`.
 | Fit to View | `Ctrl+0` |
 | Toggle Edit Mode | `Ctrl+E` |
 | Retry AI Analysis | `F5` |
+
+## Mouse and trackpad (X-ray viewer)
+
+| Action | Mouse | Trackpad |
+|--|--|--|
+| Zoom | Scroll wheel | Pinch |
+| Move the image | Click and drag | Two-finger scroll, or click and drag |
+
+`Ctrl` + scroll (`Cmd` on macOS) also zooms. On some Windows laptops, two-finger scroll may zoom instead of moving, because Windows can report the trackpad as a mouse.
 
 ## What it does
 

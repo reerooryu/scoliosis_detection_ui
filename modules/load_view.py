@@ -4,7 +4,7 @@
 
 import os
 from PySide6.QtCore import Qt, Signal, QPointF
-from PySide6.QtGui import QPixmap, QFont, QPainter, QPen, QColor
+from PySide6.QtGui import QPixmap, QFont, QPainter, QPen, QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
     QFileDialog, QMessageBox, QSizePolicy
@@ -202,12 +202,19 @@ class LoadPage(QWidget):
         action_row = QHBoxLayout()
         action_row.addStretch()
         self.submit_btn = QPushButton("Submit →")
+        self.submit_btn.setToolTip("Send the image for AI analysis (Enter)")
         self.submit_btn.setObjectName("PrimaryButton")
         self.submit_btn.setEnabled(False)
         self.submit_btn.setCursor(Qt.PointingHandCursor)
         self.submit_btn.clicked.connect(self._on_submit)
         action_row.addWidget(self.submit_btn)
         layout.addLayout(action_row)
+
+        # Enter (or Return) submits too, once an image is chosen.
+        for key in (Qt.Key_Return, Qt.Key_Enter):
+            shortcut = QShortcut(QKeySequence(key), self)
+            shortcut.setContext(Qt.WindowShortcut)
+            shortcut.activated.connect(self._on_submit)
 
     def _on_file_selected(self, file_path):
         """Validates, previews, and stores the image path internally."""
@@ -238,5 +245,6 @@ class LoadPage(QWidget):
         self.submit_btn.setEnabled(False)
 
     def _on_submit(self):
-        if self.image_path:
+        # Only while this page is showing, so Enter does nothing elsewhere.
+        if self.image_path and self.isVisible() and self.submit_btn.isEnabled():
             self.submitted.emit(self.image_path)
