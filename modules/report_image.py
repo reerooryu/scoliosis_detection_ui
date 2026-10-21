@@ -214,6 +214,9 @@ class _Panel:
         if apex_idx is not None:
             self.top.append([("text", "Apex #{}".format(apex_idx), small, TEXT_MUTED)])
             self.top.append([("text", "CSVL {:.0f} px".format(deviation), small, TEXT_MUTED)])
+        seconds = engine.get_processing_time()
+        if seconds is not None:
+            self.top.append([("text", "Processing {:.2f} s".format(seconds), small, TEXT_MUTED)])
         if edited:
             self.top.append([("text", "Edited by hand", small, TEXT_EDITED)])
 

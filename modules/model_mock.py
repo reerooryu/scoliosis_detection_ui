@@ -13,6 +13,10 @@ from modules.geometry import (
 # Maximum undo steps. Each step is a full copy of the result.
 UNDO_HISTORY_LIMIT = 50
 
+# Field in the result for the processing time: the full round trip in
+# seconds (upload, model, reply). Saved in exports and projects.
+PROCESSING_TIME_KEY = "processing_time_seconds"
+
 class ScoliosisModelEngine:
     def __init__(self, json_path=None, autoload=False):
         self.json_path = json_path
@@ -89,6 +93,15 @@ class ScoliosisModelEngine:
     def get_input_shape(self):
         """Returns original image input dimensions [height, width]."""
         return self.data.get("input_shape", [1832, 1190])
+
+    def set_processing_time(self, seconds):
+        """Record the analysis time (full round trip, in seconds)."""
+        self.data[PROCESSING_TIME_KEY] = round(float(seconds), 3)
+
+    def get_processing_time(self):
+        """The analysis time in seconds, or None (e.g. older projects)."""
+        value = self.data.get(PROCESSING_TIME_KEY) if self.data else None
+        return float(value) if isinstance(value, (int, float)) else None
 
     def get_raw_data(self):
         """Returns the raw dictionary data."""

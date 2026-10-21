@@ -104,6 +104,8 @@ class AnalysisController(QObject):
 
         model_engine = ScoliosisModelEngine(autoload=False)
         model_engine.load_from_dict(data)
+        # Saved with the result, so exports and projects include it.
+        model_engine.set_processing_time(elapsed)
         # Match the result to the displayed image size. Skip this if the file
         # can no longer be read: a 0x0 size would move every landmark to (0, 0).
         pixmap = QPixmap(self.session.image_path)

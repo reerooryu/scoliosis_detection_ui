@@ -577,8 +577,11 @@ class MainWindow(QMainWindow):
     def _open_project_path(self, path):
         if self.controller.open_project(path):
             self.stack.setCurrentWidget(self.workspace_page)
-            # No inference ran, so clear any time left from an earlier analysis.
-            self.workspace_page.metrics["Processing Time"].set_value("-")
+            # Show the time saved with the project ("-" for older projects).
+            seconds = self.session.model_engine.get_processing_time()
+            self.workspace_page.metrics["Processing Time"].set_value(
+                "{:.2f}s (API round-trip)".format(seconds) if seconds is not None else "-"
+            )
             # Draw the overlay once the page is visible and laid out; label
             # placement needs the final viewport size.
             QTimer.singleShot(150, self.controller.finish_open_project)

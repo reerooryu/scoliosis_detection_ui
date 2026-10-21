@@ -18,6 +18,7 @@ def edited_engine():
     """A loaded result with one landmark moved, so it differs from the AI's."""
     engine = ScoliosisModelEngine(autoload=False)
     engine.load_from_dict(make_result())
+    engine.set_processing_time(3.2104)
     engine.capture_baseline()
     x, y = engine.get_detections()[10]["keypoints"][1][:2]
     engine.update_keypoint(10, 1, x + 12, y - 7)
@@ -57,6 +58,7 @@ def test_reopened_project_gives_the_same_measurements(tmp_path):
 
     assert reopened.get_angle_pairs() == engine.get_angle_pairs()
     assert reopened.get_selected_cobb_angle() == engine.get_selected_cobb_angle()
+    assert reopened.get_processing_time() == 3.21
     assert reopened.has_edits()
 
     # "Reset Edits" after reopening returns to the AI's original result.

@@ -146,6 +146,7 @@ On macOS, use `Cmd` instead of `Ctrl`.
 - **Measurements**: Primary Cobb Angle, one row per curve (up to four), Apex, CSVL Deviation, Vertebrae, Processing Time.
 - **Save / Open Project**: a `.sdproj` file stores the image, your edits and the original AI result, so you can continue later without running the AI again.
 - **Export**: raw JSON, and a JPG of the X-ray with the overlay and a results panel on the right. Files are named after the image with a timestamp.
+- **Processing time**: the full round trip (upload, model, reply). Shown in the panel, and saved in the JSON (`processing_time_seconds`), the JPG and project files.
 - **Settings**: server address, the color of each curve, default export folder.
 - **Model Validation** (Tools menu): compares a prediction JSON with a ground-truth label JSON. For the ML team.
 
