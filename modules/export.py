@@ -1,5 +1,5 @@
-# Export dialog. Only Raw JSON works today; Annotated Image, PDF Report and
-# CSV are shown disabled as "coming soon".
+# Export dialog: raw JSON and an annotated JPG (the X-ray with the overlay and
+# a results panel). PDF Report and CSV are shown disabled as "coming soon".
 
 import os
 import re
@@ -11,19 +11,29 @@ from PySide6.QtWidgets import (
 )
 
 from modules.utils import export_json_data
+from modules.report_image import render_annotated_image
 from modules.settings_dialog import SettingsDialog
 
 
 class ExportDialog(QDialog):
     """Choose export formats and a destination folder."""
 
-    def __init__(self, model_engine, parent=None, source_name=None):
+    # JPEG quality, 0-100.
+    JPG_QUALITY = 95
+
+    def __init__(self, model_engine, parent=None, source_name=None, image=None,
+                 curve_colors=None, edited=False):
         super().__init__(parent)
         self.setWindowTitle("Export Results")
         self.setMinimumWidth(380)
         self.model_engine = model_engine
-        # File name of the X-ray, used in the export file name.
+        # File name of the X-ray, used in the export file names.
         self.source_name = source_name
+        # For the annotated JPG: the X-ray, the curve colors, and whether the
+        # landmarks were edited by hand.
+        self.image = image
+        self.curve_colors = curve_colors
+        self.edited = edited
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Choose what to export:"))
@@ -32,9 +42,11 @@ class ExportDialog(QDialog):
         self.json_check.setChecked(True)
         layout.addWidget(self.json_check)
 
-        image_check = QCheckBox("Annotated Image (coming soon)")
-        image_check.setEnabled(False)
-        layout.addWidget(image_check)
+        self.image_check = QCheckBox("Annotated Image (JPG, with results panel)")
+        has_image = image is not None and not image.isNull()
+        self.image_check.setChecked(has_image)
+        self.image_check.setEnabled(has_image)
+        layout.addWidget(self.image_check)
 
         pdf_check = QCheckBox("PDF Report (coming soon)")
         pdf_check.setEnabled(False)
@@ -64,27 +76,48 @@ class ExportDialog(QDialog):
         if folder:
             self.folder_edit.setText(folder)
 
-    def _export_file_name(self, timestamp):
-        """scoliosis_assessment_<image name>_<timestamp>.json, so an export
-        can be matched to its X-ray. Spaces and characters that are not
-        allowed in file names become "_"."""
+    def _export_file_name(self, timestamp, extension):
+        """scoliosis_assessment_<image name>_<timestamp>.<extension>, so an
+        export can be matched to its X-ray. Spaces and characters that are
+        not allowed in file names become "_"."""
         stem = os.path.splitext(os.path.basename(self.source_name or ""))[0]
         stem = re.sub(r'[<>:"/\\|?*\s\x00-\x1f]+', "_", stem).strip("._")[:60]
         middle = f"{stem}_" if stem else ""
-        return f"scoliosis_assessment_{middle}{timestamp}.json"
+        return f"scoliosis_assessment_{middle}{timestamp}.{extension}"
 
     def _on_export(self):
-        if not self.json_check.isChecked():
+        want_json = self.json_check.isChecked()
+        want_image = self.image_check.isChecked()
+        if not (want_json or want_image):
             QMessageBox.information(self, "Nothing to Export", "Select at least one format.")
             return
 
         folder = self.folder_edit.text().strip() or os.path.expanduser("~")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = os.path.join(folder, self._export_file_name(timestamp))
-        ok, message = export_json_data(self.model_engine.get_raw_data(), path)
+        saved, errors = [], []
 
-        if ok:
-            QMessageBox.information(self, "Export Successful", f"Saved to:\n{path}")
-            self.accept()
-        else:
-            QMessageBox.critical(self, "Export Failed", message)
+        if want_json:
+            path = os.path.join(folder, self._export_file_name(timestamp, "json"))
+            ok, message = export_json_data(self.model_engine.get_raw_data(), path)
+            (saved if ok else errors).append(path if ok else message)
+
+        if want_image:
+            path = os.path.join(folder, self._export_file_name(timestamp, "jpg"))
+            try:
+                os.makedirs(folder, exist_ok=True)
+                rendered = render_annotated_image(
+                    self.image, self.model_engine, self.curve_colors, self.source_name, self.edited
+                )
+                if rendered.save(path, "JPG", self.JPG_QUALITY):
+                    saved.append(path)
+                else:
+                    errors.append(f"Could not write the image: {path}")
+            except OSError as exc:
+                errors.append(f"Could not write the image: {exc}")
+
+        if errors:
+            done = ("Saved:\n" + "\n".join(saved) + "\n\n") if saved else ""
+            QMessageBox.critical(self, "Export Failed", done + "\n".join(errors))
+            return
+        QMessageBox.information(self, "Export Successful", "Saved to:\n" + "\n".join(saved))
+        self.accept()

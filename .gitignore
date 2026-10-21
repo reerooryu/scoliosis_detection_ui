@@ -249,6 +249,7 @@ blueprint.md
 # Saved projects and exported results can contain patient X-rays and data
 *.sdproj
 scoliosis_assessment_*.json
+scoliosis_assessment_*.jpg
 
 # ---------------------------------------------------------------------------
 # Local only -- not part of the shared repo

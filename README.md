@@ -145,11 +145,11 @@ On macOS, use `Cmd` instead of `Ctrl`.
 - **Edit**: drag landmarks in Edit Mode. When you release a landmark, the curves are chosen again by the same rules the server uses. Undo, Redo, and Reset Edits to return to the AI result.
 - **Measurements**: Primary Cobb Angle, one row per curve (up to four), Apex, CSVL Deviation, Vertebrae, Processing Time.
 - **Save / Open Project**: a `.sdproj` file stores the image, your edits and the original AI result, so you can continue later without running the AI again.
-- **Export**: raw JSON, named after the image with a timestamp.
+- **Export**: raw JSON, and a JPG of the X-ray with the overlay and a results panel on the right. Files are named after the image with a timestamp.
 - **Settings**: server address, the color of each curve, default export folder.
 - **Model Validation** (Tools menu): compares a prediction JSON with a ground-truth label JSON. For the ML team.
 
-Not built yet: Annotated Image, PDF Report and CSV export (shown as "coming soon" in the Export dialog).
+Not built yet: PDF Report and CSV export (shown as "coming soon" in the Export dialog).
 
 ## Current limits
 
@@ -197,6 +197,7 @@ graph TD
 | `modules/parser.py` | Sends the image to the server and checks the reply. |
 | `modules/project.py` | Reads and writes `.sdproj` files. |
 | `modules/export.py` | Export dialog. |
+| `modules/report_image.py` | Draws the exported JPG: X-ray, overlay and results panel. |
 | `modules/settings_dialog.py` | Settings dialog. |
 | `modules/validation.py` | Model Validation dialog. |
 | `modules/theme.py` | Dark theme for the toolbar and workspace. |

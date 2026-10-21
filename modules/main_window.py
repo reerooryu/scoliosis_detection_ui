@@ -541,7 +541,14 @@ class MainWindow(QMainWindow):
     def _on_export_clicked(self):
         if self.session.model_engine is None:
             return
-        dialog = ExportDialog(self.session.model_engine, self, source_name=self._source_name())
+        image_item = self.workspace_page.canvas.image_item
+        dialog = ExportDialog(
+            self.session.model_engine, self,
+            source_name=self._source_name(),
+            image=image_item.pixmap() if image_item is not None else None,
+            curve_colors=self.overlay_layer.curve_colors,
+            edited=self.session.has_edits(),
+        )
         if dialog.exec() == QDialog.Accepted:
             self.session.dirty = False
             self._update_window_title()
