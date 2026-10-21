@@ -13,7 +13,9 @@ They can run on the same computer or on two different ones.
 
 ## Install
 
-You need **Python 3.10 or newer** and **Git**.
+You need **Git** and **Python 3.12** (recommended). The app alone runs on Python 3.10 or newer, but the server needs PyTorch, which does not support the newest Python versions yet (for example 3.15).
+
+Use `python -m pip`, not `pip`, in every command below. On Windows, a plain `pip` can install into the system Python instead of `.venv`, and the app then fails with `No module named 'PySide6'`.
 
 ### Step 1. Get the code
 
@@ -41,11 +43,13 @@ Set-ExecutionPolicy Bypass -Scope Process
 
 Without the second line, Windows blocks the activation script. It only applies to this PowerShell window, so run it again in every new window before activating.
 
+If `python --version` shows a version newer than 3.12, install 3.12 with `py install 3.12` and create the environment with `py -3.12 -m venv .venv` instead.
+
 ### Step 3. Install the app
 
 ```
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 If the server runs on another computer, stop here and go to [Run](#run), Step 2.
@@ -53,8 +57,8 @@ If the server runs on another computer, stop here and go to [Run](#run), Step 2.
 ### Step 4. Install the server
 
 ```
-pip install -r requirements-server.txt
-pip install --no-build-isolation "git+https://github.com/facebookresearch/detectron2.git"
+python -m pip install -r requirements-server.txt
+python -m pip install --no-build-isolation "git+https://github.com/facebookresearch/detectron2.git"
 ```
 
 - Run the two commands in this order. The first one also installs PyTorch. Detectron2's installer needs it, which is why `--no-build-isolation` is required.
@@ -210,7 +214,7 @@ graph TD
 ## Run the tests
 
 ```
-pip install pytest
+python -m pip install pytest
 pytest
 ```
 
@@ -219,7 +223,7 @@ The tests need no GPU, model or Detectron2. GitHub runs them on every push (Acti
 ## Build a standalone app (optional)
 
 ```
-pip install pyinstaller
+python -m pip install pyinstaller
 pyinstaller --noconsole --onefile app.py
 ```
 
