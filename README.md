@@ -253,7 +253,7 @@ graph TD
 ## Run the tests
 
 ```
-python -m pip install pytest
+python -m pip install pytest numpy
 pytest
 ```
 

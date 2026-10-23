@@ -1,5 +1,6 @@
-# Runs the tests on every push and pull request. Only Python and pytest are
-# needed: the tests cover the math and project files, not the model or the UI.
+# Runs the tests on every push and pull request. Only Python, pytest and numpy
+# are needed: the tests cover the math, post-processing and project files, not
+# the model or the UI.
 name: Tests
 
 on:
@@ -17,5 +18,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install pytest
+      - run: pip install pytest numpy
       - run: pytest -v
