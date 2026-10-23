@@ -187,7 +187,7 @@ On macOS, use `Cmd` instead of `Ctrl`.
 
 - **Load**: drag-and-drop or File → Open Image. JPG, JPEG and PNG.
 - **Analyse**: the image is sent to the server in the background, so the window stays responsive. A moving bar in the status bar shows that a request is running.
-- **Overlay**: vertebra outlines, Cobb lines and labels, and the CSVL are drawn on top of the image. Each curve has its own color for its two lines, its label and its row in the measurement panel. The image itself is never changed.
+- **Overlay**: vertebra outlines, Cobb lines and labels, and the CSVL are drawn on top of the image. Each curve has its own color for its two lines, its label and its row in the measurement panel. The image itself is never changed. Each vertebra has a small level label (C7, T1 … L5); each curve's apex label is filled with the curve's color, and the whole-spine apex is larger.
 - **Edit**: drag landmarks in Edit Mode. When you release a landmark, the curves are chosen again by the same rules the server uses. Undo, Redo, and Reset Edits to return to the AI result.
 - **Measurements**: Primary Cobb Angle, one row per curve (up to four), Apex, CSVL Deviation, Vertebrae, Processing Time.
 - **Save / Open Project**: a `.sdproj` file stores the image, your edits and the original AI result, so you can continue later without running the AI again.
@@ -202,7 +202,7 @@ Not built yet: PDF Report and CSV export (shown as "coming soon" in the Export d
 
 - Input is JPG, JPEG or PNG only. DICOM is not supported.
 - CSVL deviation is in pixels, not mm. The image carries no pixel spacing.
-- In the app, vertebrae are numbered from the top, starting at 0. The exported JPG names them by level instead, assuming the lowest one is L5.
+- Vertebrae are named by level, counted up from the lowest detected vertebra as L5. If the model misses a vertebra or finds one twice, every name shifts by one level.
 - Cobb angles are reported between 0 and 90 degrees.
 - Curves are measured from the marker vertebra (detection class 1) downward. Vertebrae above it are not used.
 - The server does not mark the sacrum, so the CSVL is drawn through the lowest detected vertebra.

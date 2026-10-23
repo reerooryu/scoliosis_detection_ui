@@ -5,8 +5,8 @@ import copy
 
 from config import KP_TOP_LEFT, KP_TOP_RIGHT, KP_BOTTOM_LEFT, KP_BOTTOM_RIGHT
 from modules.geometry import (
-    cobb_angle_between_obliques, compute_csvl_x, compute_apex, oblique_angle,
-    curve_start_index, select_angle_pairs,
+    cobb_angle_between_obliques, compute_csvl_x, compute_apex, curve_apex, level_label,
+    oblique_angle, curve_start_index, select_angle_pairs, vertebra_levels,
 )
 
 # Maximum undo steps. Each step is a full copy of the result.
@@ -98,6 +98,23 @@ class ScoliosisModelEngine:
     def get_apex(self):
         """Returns (apex_index, deviation_px): the vertebra furthest from the CSVL."""
         return compute_apex(self.get_detections(), self.get_csvl_x())
+
+    def get_level(self, index):
+        """Level name of a vertebra (e.g. "T9"), counted up from the lowest
+        one as L5; "?" if it has none."""
+        return level_label(vertebra_levels(len(self.get_detections())), index)
+
+    def get_curve_apexes(self):
+        """Apex vertebra index of each curve (None if it has none), in curve
+        order. The curve containing the whole-spine apex uses it; see
+        modules/geometry.py:curve_apex."""
+        detections = self.get_detections()
+        main_apex, _ = self.get_apex()
+        return [
+            curve_apex(detections, pair.get("upper_detection_index", -1),
+                       pair.get("lower_detection_index", -1), main_apex)[0]
+            for pair in self.get_angle_pairs()
+        ]
 
     def update_keypoint(self, detection_index, keypoint_index, x, y):
         """Move one keypoint, then recalculate every angle."""

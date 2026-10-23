@@ -265,6 +265,9 @@ scoliosis_assessment_*.jpg
 /test_img/
 /test_json/
 
+# Trial runs, test images and exports (can contain patient X-rays)
+/trials/
+
 # Retired wizard UI, replaced by modules/main_window.py. Nothing imports
 # these, and they fail to import anyway (they need a canvas class that was
 # removed).

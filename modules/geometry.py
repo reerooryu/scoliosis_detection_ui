@@ -177,6 +177,14 @@ def vertebra_levels(count):
     return names
 
 
+def level_label(levels, index):
+    """Printable level name of vertebra index (e.g. "T9"), or "?" if it has
+    none. levels is the list from vertebra_levels()."""
+    if index is None or not (0 <= index < len(levels)) or levels[index] is None:
+        return "?"
+    return levels[index]
+
+
 # ---------------------------------------------------------------------------
 # CSVL (Central Sacral Vertical Line) and apex vertebra
 # ---------------------------------------------------------------------------

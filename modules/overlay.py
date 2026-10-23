@@ -7,10 +7,10 @@ import math
 
 import shiboken6
 
-from PySide6.QtCore import QPointF, QPoint, Signal, QObject, Qt
-from PySide6.QtGui import QPen, QBrush, QColor, QPolygonF
+from PySide6.QtCore import QPointF, QPoint, QRectF, Signal, QObject, Qt
+from PySide6.QtGui import QPen, QBrush, QColor, QFont, QFontMetricsF, QPolygonF
 from PySide6.QtWidgets import (
-    QGraphicsEllipseItem, QGraphicsPolygonItem, QGraphicsLineItem,
+    QGraphicsEllipseItem, QGraphicsItem, QGraphicsPolygonItem, QGraphicsLineItem,
     QGraphicsTextItem
 )
 
@@ -163,6 +163,62 @@ class CSVLLineItem(QGraphicsLineItem):
         self.setPen(pen)
 
 
+class LevelTagItem(QGraphicsItem):
+    """Small level name (e.g. "T9") left of a vertebra, the same size on
+    screen at any zoom. Normally faint; a curve's apex is filled with the
+    curve's color, and the whole-spine apex is drawn larger. It ignores
+    mouse clicks, so dragging over it still moves the image."""
+
+    GAP_PX = 6          # space between the tag and the vertebra
+    FONT_PX = 10
+    MAIN_APEX_FONT_PX = 12
+    DEFAULT_FILL = QColor(0, 0, 0, 130)
+    DEFAULT_INK = QColor(255, 255, 255, 215)
+
+    def __init__(self):
+        super().__init__()
+        self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
+        self.setAcceptedMouseButtons(Qt.NoButton)
+        self._style = None
+        self._text = ""
+        self._font = QFont()
+        self._fill = self.DEFAULT_FILL
+        self._ink = self.DEFAULT_INK
+        self._rect = QRectF()
+
+    def set_style(self, text, fill=None, ink=None, large=False):
+        """Set the text and colors. Does nothing if they are unchanged, so it
+        is cheap to call on every drag tick."""
+        fill = fill or self.DEFAULT_FILL
+        ink = ink or self.DEFAULT_INK
+        style = (text, fill.rgba(), ink.rgba(), large)
+        if style == self._style:
+            return
+        self._style = style
+        self._text, self._fill, self._ink = text, fill, ink
+        self._font = QFont()
+        self._font.setPixelSize(self.MAIN_APEX_FONT_PX if large else self.FONT_PX)
+        self._font.setBold(True)
+        metrics = QFontMetricsF(self._font)
+        width = metrics.horizontalAdvance(text) + 6
+        height = metrics.height()
+        # Right-aligned to the item's position, which is the vertebra's left edge.
+        self.prepareGeometryChange()
+        self._rect = QRectF(-width - self.GAP_PX, -height / 2, width, height)
+        self.update()
+
+    def boundingRect(self):
+        return self._rect
+
+    def paint(self, painter, option, widget=None):
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(self._fill)
+        painter.drawRoundedRect(self._rect, 2, 2)
+        painter.setFont(self._font)
+        painter.setPen(self._ink)
+        painter.drawText(self._rect, Qt.AlignCenter, self._text)
+
+
 def extended_line_points(p1, p2, extend_len=200):
     """Returns (start, end) points for the p1->p2 line extended at both ends."""
     dx = p2.x() - p1.x()
@@ -191,6 +247,9 @@ class OverlayLayer:
         self.cobb_lines = []
         self.cobb_texts = []
         self.csvl_item = None
+        self.level_tags = []
+        # The engine last drawn, so a color change can restyle the level tags.
+        self._engine = None
         # (mid_y, min_x, max_x, label) per curve, kept so the labels can be
         # re-placed when the zoom changes.
         self._label_anchors = []
@@ -201,7 +260,7 @@ class OverlayLayer:
         """Remove all overlay items. QGraphicsScene.clear() may already have
         deleted them, so each one is checked before it is touched."""
         scene = self.canvas.scene()
-        for item in self.outline_items + self.handle_items + self.cobb_lines + self.cobb_texts:
+        for item in self.outline_items + self.handle_items + self.cobb_lines + self.cobb_texts + self.level_tags:
             self._remove_item_if_valid(scene, item)
         self._remove_item_if_valid(scene, self.corridor_item)
         self._remove_item_if_valid(scene, self.csvl_item)
@@ -211,6 +270,8 @@ class OverlayLayer:
         self.cobb_lines = []
         self.cobb_texts = []
         self.csvl_item = None
+        self.level_tags = []
+        self._engine = None
         self._label_anchors = []
         self._label_angles = []
 
@@ -240,6 +301,8 @@ class OverlayLayer:
         for index, label in enumerate(self.cobb_texts):
             if shiboken6.isValid(label) and index < len(self._label_angles):
                 label.setHtml(self._label_html(index, self._label_angles[index]))
+        if self._engine is not None and all(shiboken6.isValid(tag) for tag in self.level_tags):
+            self._render_level_tags(self._engine)
 
     def _label_html(self, curve_index, cobb_angle):
         """Label text for one curve, with a strip in the curve's color so the
@@ -294,8 +357,48 @@ class OverlayLayer:
                         handle.setPos(kp[0], kp[1])
                     handle_idx += 1
 
+        self._engine = model_engine
         self._render_csvl(model_engine)
         self._render_cobb_overlays(detections, angle_pairs)
+        self._render_level_tags(model_engine)
+
+    def _render_level_tags(self, model_engine):
+        """Place a level tag left of each vertebra and color the apexes:
+        each curve's apex in the curve's color, the whole-spine apex larger."""
+        detections = model_engine.get_detections()
+        if len(self.level_tags) != len(detections):
+            for tag in self.level_tags:
+                self._remove_item_if_valid(self.canvas.scene(), tag)
+            self.level_tags = []
+            for _ in detections:
+                tag = LevelTagItem()
+                tag.setZValue(2.8)   # above outlines, below handles
+                self.canvas.scene().addItem(tag)
+                self.level_tags.append(tag)
+
+        apex_colors = {
+            apex_idx: QColor(self.curve_color(curve_idx))
+            for curve_idx, apex_idx in enumerate(model_engine.get_curve_apexes())
+            if apex_idx is not None
+        }
+        main_apex, _ = model_engine.get_apex()
+
+        for index, (det, tag) in enumerate(zip(detections, self.level_tags)):
+            kps = det.get("keypoints", [])
+            if len(kps) < 5:
+                tag.setVisible(False)
+                continue
+            tag.setVisible(True)
+            tag.setPos(min(kps[KP_TOP_LEFT][0], kps[KP_BOTTOM_LEFT][0]), kps[KP_CENTER][1])
+            text = model_engine.get_level(index)
+            if index in apex_colors:
+                fill = apex_colors[index]
+                ink = QColor("#111111") if fill.lightness() > 140 else QColor("white")
+                tag.set_style(text, fill, ink, large=index == main_apex)
+            elif index == main_apex:
+                tag.set_style(text, QColor(255, 255, 255, 235), QColor("#111111"), large=True)
+            else:
+                tag.set_style(text)
 
     def _render_csvl(self, model_engine):
         csvl_x = model_engine.get_csvl_x()

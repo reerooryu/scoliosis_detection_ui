@@ -111,7 +111,8 @@ class WorkspacePage(QWidget):
 
         self.metrics["Apex"].set_tooltip(
             "Vertebra with the largest horizontal deviation from the CSVL "
-            "(approximated -- see CSVL Deviation tooltip)."
+            "(approximated -- see CSVL Deviation tooltip). Levels are counted "
+            "up from the lowest detected vertebra as L5."
         )
         self.metrics["CSVL Deviation"].set_tooltip(
             "CSVL (Central Sacral Vertical Line) reference is approximated as "
@@ -136,12 +137,12 @@ class WorkspacePage(QWidget):
         splitter.setSizes([1000, 300])
         self.show_curves([])
 
-    def show_curves(self, pairs):
-        """Fill one row per curve with its Cobb angle."""
+    def show_curves(self, texts):
+        """Fill one row per curve; texts are the row values, top curve first."""
         for i in range(self.MAX_CURVE_ROWS):
             row = self.metrics["Curve {}".format(i + 1)]
-            row.set_value("{:.1f}°".format(pairs[i]["cobb_angle"]) if i < len(pairs) else "-")
-            row.setVisible(i < max(len(pairs), 2))
+            row.set_value(texts[i] if i < len(texts) else "-")
+            row.setVisible(i < max(len(texts), 2))
 
     def set_curve_colors(self, colors):
         """Show each curve's color next to its row, matching the image."""
@@ -447,11 +448,11 @@ class MainWindow(QMainWindow):
             metrics["Primary Cobb Angle"].set_value("{:.1f}°".format(engine.get_selected_cobb_angle()))
         else:
             metrics["Primary Cobb Angle"].set_value("No curve above 10°")
-        self.workspace_page.show_curves(pairs)
 
         apex_idx, deviation_px = engine.get_apex()
+        self.workspace_page.show_curves(self._curve_texts(engine, pairs, apex_idx))
         if apex_idx is not None:
-            metrics["Apex"].set_value("Vertebra #{}".format(apex_idx))
+            metrics["Apex"].set_value(engine.get_level(apex_idx))
             metrics["CSVL Deviation"].set_value("{:.1f} px".format(deviation_px))
         else:
             metrics["Apex"].set_value("-")
@@ -459,6 +460,23 @@ class MainWindow(QMainWindow):
 
         metrics["Vertebrae"].set_value(str(len(engine.get_detections())))
         self._update_window_title()
+
+    @staticmethod
+    def _curve_texts(engine, pairs, main_apex):
+        """One panel line per curve: angle, then its levels and apex in small
+        text. The whole-spine apex is in bold, as in the exported JPG."""
+        texts = []
+        for pair, curve_apex in zip(pairs, engine.get_curve_apexes()):
+            details = "{}–{}".format(engine.get_level(pair["upper_detection_index"]),
+                                     engine.get_level(pair["lower_detection_index"]))
+            if curve_apex is not None:
+                apex = engine.get_level(curve_apex)
+                if curve_apex == main_apex:
+                    apex = "<b style='color:{};'>{}</b>".format(theme.TEXT_PRIMARY, apex)
+                details += " · apex " + apex
+            texts.append("{:.1f}°&nbsp;&nbsp;<span style='font-size:10pt; font-weight:400; color:{};'>{}</span>".format(
+                pair["cobb_angle"], theme.TEXT_MUTED, details))
+        return texts
 
     def _on_analysis_completed(self, elapsed):
         self.workspace_page.metrics["Processing Time"].set_value("{:.2f}s (API round-trip)".format(elapsed))
