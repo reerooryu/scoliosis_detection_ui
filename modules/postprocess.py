@@ -12,30 +12,29 @@ import numpy as np
 
 from modules.geometry import curve_start_index, oblique_angle, select_angle_pairs
 
+# Detections scoring below this are dropped.
+SCORE_THRESHOLD = 0.8
+
 
 def scale_prediction_data(boxes, keypoints, original_shape, model_shape):
-    """Map boxes and keypoints from model-input size back to the original
-    image size."""
-    h0, w0 = original_shape[:2]
-    h1, w1 = model_shape[:2]
-    h_ratio = h0 / h1
-    w_ratio = w0 / w1
+    """Map boxes (N x 4) and keypoints (N x 5 x 3: x, y, confidence) from
+    model-input size back to the original image size. Returns float arrays."""
+    h_ratio = original_shape[0] / model_shape[0]
+    w_ratio = original_shape[1] / model_shape[1]
+    boxes = np.asarray(boxes)
+    keypoints = np.asarray(keypoints)
 
-    scaled_boxes = []
-    scaled_keypoints = []
-    for i in range(len(boxes)):
-        x1, y1, x2, y2 = boxes[i]
-        scaled_boxes.append([x1 * w_ratio, y1 * h_ratio, x2 * w_ratio, y2 * h_ratio])
+    scaled_boxes = np.empty(boxes.shape, dtype=float)
+    scaled_boxes[:, 0::2] = boxes[:, 0::2] * w_ratio    # x1, x2
+    scaled_boxes[:, 1::2] = boxes[:, 1::2] * h_ratio    # y1, y2
 
-        keypoints_i = []
-        for kp in keypoints[i]:
-            keypoints_i.append([kp[0] * w_ratio, kp[1] * h_ratio, float(kp[2])])
-        scaled_keypoints.append(np.asarray(keypoints_i, dtype=float))
-
-    return np.asarray(scaled_boxes, dtype=float), np.asarray(scaled_keypoints, dtype=float)
+    scaled_keypoints = keypoints.astype(float)          # keeps the confidence column
+    scaled_keypoints[..., 0] = keypoints[..., 0] * w_ratio
+    scaled_keypoints[..., 1] = keypoints[..., 1] * h_ratio
+    return scaled_boxes, scaled_keypoints
 
 
-def filter_and_sort_detections(classes, scores, boxes, keypoints, score_threshold=0.8):
+def filter_and_sort_detections(classes, scores, boxes, keypoints, score_threshold=SCORE_THRESHOLD):
     """Keep detections scoring at least score_threshold, keep only the best
     class-1 detection, and sort them top to bottom."""
     pc0 = []

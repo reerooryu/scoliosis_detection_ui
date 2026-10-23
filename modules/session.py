@@ -42,9 +42,6 @@ class AnalysisSession(QObject):
     def has_result(self):
         return self.model_engine is not None
 
-    def has_project(self):
-        return self.project_path is not None
-
     def _set_state(self, state):
         self.state = state
         self.state_changed.emit(state)

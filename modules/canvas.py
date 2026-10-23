@@ -41,7 +41,6 @@ class ImageCanvas(QGraphicsView):
         self.setBackgroundBrush(Qt.black)
 
         self.image_item = None
-        self.zoom_factor = 1.0
         # While True, resizing the window re-fits the image. Set to False
         # once the user zooms, so a resize does not undo their zoom.
         self._auto_fit = True
@@ -60,7 +59,6 @@ class ImageCanvas(QGraphicsView):
         if self.image_item is not None:
             self._auto_fit = True
             self.fitInView(self.image_item, Qt.KeepAspectRatio)
-            self.zoom_factor = self.transform().m11()
             self.view_changed.emit()
 
     def zoom_in(self):
@@ -93,7 +91,6 @@ class ImageCanvas(QGraphicsView):
             return
         self._auto_fit = False
         self.scale(target / current, target / current)
-        self.zoom_factor = self.transform().m11()
         self.view_changed.emit()
 
     @staticmethod

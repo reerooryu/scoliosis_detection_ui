@@ -126,7 +126,7 @@ python server.py
 python server.py
 ```
 
-Wait until it prints `Uvicorn running on http://0.0.0.0:4000`. The first start is slow because the model has to load. Warnings printed before that line are normal. If the weights file is missing, the server stops with an error.
+Wait until it prints `Uvicorn running on http://0.0.0.0:4000`. The first start is slow because the model has to load. Warnings printed before that line are normal, including one that lists unused `mask_head` weights: the server skips the model's outline (mask) step on purpose, because the result does not use it. If the weights file is missing, the server stops with an error.
 
 To check it is up, open http://127.0.0.1:4000/health in a browser. You should see `{"status":"ok"}`.
 
@@ -248,7 +248,7 @@ graph TD
 | `modules/settings_dialog.py` | Settings dialog. |
 | `modules/validation.py` | Model Validation dialog. |
 | `modules/theme.py` | Dark theme for the toolbar and workspace. |
-| `tests/` | Tests for the math and for project save and open. |
+| `tests/` | Tests for the math, the server's post-processing, and project save and open. |
 
 ## Run the tests
 

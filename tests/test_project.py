@@ -16,7 +16,7 @@ IMAGE_BYTES = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
 
 def edited_engine():
     """A loaded result with one landmark moved, so it differs from the AI's."""
-    engine = ScoliosisModelEngine(autoload=False)
+    engine = ScoliosisModelEngine()
     engine.load_from_dict(make_result())
     engine.set_processing_time(3.2104)
     engine.capture_baseline()
@@ -52,7 +52,7 @@ def test_reopened_project_gives_the_same_measurements(tmp_path):
     path = save(engine, tmp_path)
     _, _, model_data, baseline_data, _ = read_project(path)
 
-    reopened = ScoliosisModelEngine(autoload=False)
+    reopened = ScoliosisModelEngine()
     reopened.load_from_dict(model_data)
     reopened.restore_baseline(baseline_data)
 

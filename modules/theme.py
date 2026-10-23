@@ -12,8 +12,6 @@ TEXT_MUTED = "#9aa4ab"       # Secondary labels
 ACCENT = "#4f83a3"           # Desaturated steel blue - primary actions
 ACCENT_HOVER = "#5d93b3"
 ACCENT_TEXT = "#ffffff"
-DANGER = "#b3564a"           # Muted red - destructive/reject states
-SUCCESS = "#4f9d78"          # Muted green - confirmations
 
 STYLESHEET = f"""
 QWidget {{

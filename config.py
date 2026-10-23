@@ -1,7 +1,5 @@
 # App-wide constants.
 
-import os
-
 # Application Window Configuration
 APP_NAME = "Scoliosis Detection & Measurement UI"
 WINDOW_WIDTH = 1440
@@ -13,9 +11,6 @@ SUPPORTED_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
 # Inference server endpoint. Can be changed in the Settings dialog.
 INFERENCE_API_URL = "http://127.0.0.1:4000/predict"
 INFERENCE_TIMEOUT = 120  # seconds
-
-# This file's folder, so paths do not depend on the current working directory.
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Keypoint order within each vertebra.
 KP_CENTER = 0
@@ -29,7 +24,6 @@ COLOR_VERTEBRA_OUTLINE = (0, 120, 215, 180)     # Blue, semi-transparent
 COLOR_CORRIDOR_FILL = (0, 204, 150, 60)         # Emerald Green, low opacity (alpha = 60/255)
 COLOR_KEYPOINT_CENTER = (255, 193, 7, 190)      # Amber/Yellow for center -- slightly translucent
 COLOR_KEYPOINT_CORNER = (220, 53, 69, 190)      # Red for corner points -- slightly translucent
-COLOR_COBB_TEXT_BG = (255, 255, 255, 220)       # White for text background
 COLOR_CSVL_LINE = (233, 30, 99, 210)            # Magenta/pink for the CSVL reference line
 
 # Color of each curve's Cobb lines and label, top curve first. Editable in

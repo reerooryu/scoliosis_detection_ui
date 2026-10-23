@@ -102,15 +102,17 @@ class AnalysisController(QObject):
         self._busy = False
         self.busy_changed.emit(False)
 
-        model_engine = ScoliosisModelEngine(autoload=False)
+        model_engine = ScoliosisModelEngine()
         model_engine.load_from_dict(data)
         # Saved with the result, so exports and projects include it.
         model_engine.set_processing_time(elapsed)
-        # Match the result to the displayed image size. Skip this if the file
-        # can no longer be read: a 0x0 size would move every landmark to (0, 0).
-        pixmap = QPixmap(self.session.image_path)
-        if not pixmap.isNull():
-            model_engine.scale_coordinates(pixmap.width(), pixmap.height())
+        # Match the result to the size of the image on the canvas (already
+        # decoded, so the file is not read again). Skip this if there is no
+        # image: a 0x0 size would move every landmark to (0, 0).
+        image_item = self.overlay_layer.canvas.image_item
+        if image_item is not None and not image_item.pixmap().isNull():
+            size = image_item.pixmap().size()
+            model_engine.scale_coordinates(size.width(), size.height())
         # Take the "Reset Edits" baseline after scaling, not before.
         model_engine.capture_baseline()
 
@@ -291,7 +293,7 @@ class AnalysisController(QObject):
             )
             return False
 
-        model_engine = ScoliosisModelEngine(autoload=False)
+        model_engine = ScoliosisModelEngine()
         model_engine.load_from_dict(model_data)
         model_engine.restore_baseline(baseline_data)
 

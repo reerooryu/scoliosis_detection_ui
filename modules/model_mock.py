@@ -2,8 +2,7 @@
 # The file name is historical: this handles real server results, not a mock.
 
 import copy
-import json
-import os
+
 from config import KP_TOP_LEFT, KP_TOP_RIGHT, KP_BOTTOM_LEFT, KP_BOTTOM_RIGHT
 from modules.geometry import (
     cobb_angle_between_obliques, compute_csvl_x, compute_apex, oblique_angle,
@@ -18,27 +17,12 @@ UNDO_HISTORY_LIMIT = 50
 PROCESSING_TIME_KEY = "processing_time_seconds"
 
 class ScoliosisModelEngine:
-    def __init__(self, json_path=None, autoload=False):
-        self.json_path = json_path
+    def __init__(self):
         self.data = None
         # The AI's unedited result, kept so "Reset Edits" can restore it.
         self._original_data = None
         self._undo_stack = []
         self._redo_stack = []
-        if autoload and json_path:
-            self.load_data()
-
-    def load_data(self):
-        """Load a saved result JSON from json_path. For manual testing only;
-        the app uses load_from_dict()."""
-        if not os.path.exists(self.json_path):
-            raise FileNotFoundError(f"Model mock data file not found at {self.json_path}")
-
-        with open(self.json_path, 'r') as f:
-            self.data = json.load(f)
-
-        # Ensure data consistency upon initial load
-        self.recalculate_all_metrics()
 
     def load_from_dict(self, data):
         """Load a result dict from the inference server or a saved project."""
@@ -233,11 +217,6 @@ class ScoliosisModelEngine:
         self.data["masker_point_lower"] = [lower for _, lower in after]
         return before != after
 
-    def calculate_oblique_angle(self, p1, p2):
-        """Endplate tilt in degrees from p1 (left corner) to p2 (right
-        corner). See modules/geometry.py:oblique_angle."""
-        return oblique_angle(p1, p2)
-
     def recalculate_all_metrics(self):
         """Recalculate everything derived from the keypoints: each vertebra's
         center and tilts, each curve's Cobb angle, and the largest Cobb angle.
@@ -251,12 +230,12 @@ class ScoliosisModelEngine:
                 # Top oblique (Keypoint 1 to Keypoint 2)
                 p_tl = keypoints[KP_TOP_LEFT]
                 p_tr = keypoints[KP_TOP_RIGHT]
-                det["upper_oblique"] = self.calculate_oblique_angle(p_tl, p_tr)
+                det["upper_oblique"] = oblique_angle(p_tl, p_tr)
 
                 # Bottom oblique (Keypoint 3 to Keypoint 4)
                 p_bl = keypoints[KP_BOTTOM_LEFT]
                 p_br = keypoints[KP_BOTTOM_RIGHT]
-                det["lower_oblique"] = self.calculate_oblique_angle(p_bl, p_br)
+                det["lower_oblique"] = oblique_angle(p_bl, p_br)
 
                 # Recalculate center point (Keypoint 0) as average of corners
                 p_center = keypoints[0]
