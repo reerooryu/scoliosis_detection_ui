@@ -273,3 +273,8 @@ scoliosis_assessment_*.jpg
 # removed).
 modules/wizard.py
 modules/pages.py
+
+# The folder sent to testers: the confidential model file and instructions.
+/internal_release/
+# The app's build recipe is kept (*.spec files are ignored above).
+!packaging/ScoliosisAI.spec

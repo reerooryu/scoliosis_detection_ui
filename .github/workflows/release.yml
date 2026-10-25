@@ -1,0 +1,130 @@
+# Builds the all-in-one desktop app for Windows and Mac (Apple Silicon).
+#
+#   Push a tag "vX.Y.Z" (must equal APP_VERSION in config.py)
+#       -> builds both, tests them, and publishes a GitHub release with
+#          ScoliosisAI-Windows.zip and ScoliosisAI-Mac.zip.
+#   Actions tab -> "Build app" -> Run workflow
+#       -> builds and tests only; the zips are kept as downloadable
+#          "artifacts" of that run for 14 days. Use this to try a build.
+#
+# The model file is never part of the build. See README, "Make a release".
+name: Build app
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to create the release
+
+env:
+  # The versions this was tested with. Detectron2 is not on PyPI and is
+  # built from this exact commit.
+  TORCH: torch==2.14.1 torchvision==0.29.1
+  DETECTRON2: git+https://github.com/facebookresearch/detectron2.git@b0fe2f0a5bb6496f65246ef35687a386a9f19202
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            zip: ScoliosisAI-Windows.zip
+          - os: macos-14          # Apple Silicon
+            zip: ScoliosisAI-Mac.zip
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the tag matches APP_VERSION
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(python -c "import config; print(config.APP_VERSION)")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match APP_VERSION $version in config.py"
+            exit 1
+          fi
+
+      # Detectron2 has C++ parts; on Windows they need the Visual C++ compiler.
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+
+      - name: Install
+        env:
+          DISTUTILS_USE_SDK: "1"   # Windows: use the compiler set up above
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install $TORCH
+          python -m pip install -r requirements.txt -r requirements-server.txt "pyinstaller>=6.10"
+          python -m pip install --no-build-isolation "detectron2 @ $DETECTRON2"
+
+      - name: Self-test from source
+        run: |
+          python app.py --self-test source-report.txt || status=$?
+          cat source-report.txt
+          exit ${status:-0}
+
+      - name: Build
+        run: pyinstaller packaging/ScoliosisAI.spec --noconfirm
+
+      # The built app has no console, so it is started and waited for, and
+      # its report file is read afterwards.
+      - name: Self-test the built app (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\ScoliosisAI\ScoliosisAI.exe -ArgumentList '--self-test', "$PWD\app-report.txt" -Wait -PassThru
+          Get-Content app-report.txt
+          exit $p.ExitCode
+
+      - name: Self-test the built app (Mac)
+        if: runner.os == 'macOS'
+        run: |
+          dist/ScoliosisAI.app/Contents/MacOS/ScoliosisAI --self-test "$PWD/app-report.txt" || status=$?
+          cat app-report.txt
+          exit ${status:-0}
+
+      - name: Zip (Windows)
+        if: runner.os == 'Windows'
+        run: 7z a -tzip -mx=5 "${{ matrix.zip }}" ./dist/ScoliosisAI
+
+      - name: Zip (Mac)
+        if: runner.os == 'macOS'
+        # ditto keeps the app bundle's links and attributes intact.
+        run: ditto -c -k --sequesterRsrc --keepParent dist/ScoliosisAI.app "${{ matrix.zip }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.zip }}
+          path: ${{ matrix.zip }}
+          retention-days: 14
+          compression-level: 0   # already zipped
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Scoliosis AI ${{ github.ref_name }}
+          files: |
+            ScoliosisAI-Windows.zip
+            ScoliosisAI-Mac.zip
+          body: |
+            Download the zip for your computer, unzip it, and follow the instructions sent with the model file.
+            Windows: open ScoliosisAI\ScoliosisAI.exe. Mac (Apple Silicon): open ScoliosisAI.app.
+            The AI model file is not included here.
