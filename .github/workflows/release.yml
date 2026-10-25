@@ -22,7 +22,8 @@ env:
   # The versions this was tested with. Detectron2 is not on PyPI and is
   # built from this exact commit.
   TORCH: torch==2.14.1 torchvision==0.29.1
-  DETECTRON2: git+https://github.com/facebookresearch/detectron2.git@b0fe2f0a5bb6496f65246ef35687a386a9f19202
+  DETECTRON2_REPO: https://github.com/facebookresearch/detectron2.git
+  DETECTRON2_COMMIT: b0fe2f0a5bb6496f65246ef35687a386a9f19202
 
 jobs:
   build:
@@ -55,18 +56,34 @@ jobs:
             exit 1
           fi
 
-      # Detectron2 has C++ parts; on Windows they need the Visual C++ compiler.
-      - uses: ilammy/msvc-dev-cmd@v1
-        if: runner.os == 'Windows'
-
       - name: Install
-        env:
-          DISTUTILS_USE_SDK: "1"   # Windows: use the compiler set up above
         run: |
           python -m pip install --upgrade pip
           python -m pip install $TORCH
           python -m pip install -r requirements.txt -r requirements-server.txt "pyinstaller>=6.10"
-          python -m pip install --no-build-isolation "detectron2 @ $DETECTRON2"
+
+      # Detectron2's optional C++ parts (rotated boxes, deformable convolutions,
+      # fast COCO evaluation) are not used by this model: without them the
+      # result is identical. On Windows they fail to compile (the build paths
+      # are too long for the compiler), so they are left out there.
+      - name: Install Detectron2 (Mac)
+        if: runner.os == 'macOS'
+        run: python -m pip install --no-build-isolation "detectron2 @ git+$DETECTRON2_REPO@$DETECTRON2_COMMIT"
+
+      - name: Install Detectron2 without its C++ parts (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          git clone --quiet "$DETECTRON2_REPO" "$RUNNER_TEMP/d2"
+          cd "$RUNNER_TEMP/d2"
+          git checkout --quiet "$DETECTRON2_COMMIT"
+          python - <<'EOF'
+          from pathlib import Path
+          setup = Path("setup.py")
+          text = setup.read_text()
+          assert text.count("ext_modules=get_extensions(),") == 1, "Detectron2's setup.py has changed"
+          setup.write_text(text.replace("ext_modules=get_extensions(),", "ext_modules=[],"))
+          EOF
+          python -m pip install --no-build-isolation .
 
       - name: Self-test from source
         run: |
