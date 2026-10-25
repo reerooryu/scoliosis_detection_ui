@@ -28,6 +28,7 @@ from modules.settings_dialog import SettingsDialog
 from modules.export import ExportDialog
 from modules.validation import ValidationDialog
 from modules.project import PROJECT_EXTENSION
+from modules.image_io import ImageLoadError, load_image
 
 
 class MetricRow(QFrame):
@@ -391,7 +392,10 @@ class MainWindow(QMainWindow):
         the overlay, and load_image() then wipes the scene."""
         self.controller.submit(image_path)
 
-        pixmap = QPixmap(image_path)
+        try:
+            pixmap = QPixmap.fromImage(load_image(image_path))
+        except ImageLoadError:
+            pixmap = QPixmap()      # the Load page already checked it; the file may have gone since
         self.workspace_page.canvas.load_image(pixmap)
         self.stack.setCurrentWidget(self.workspace_page)
 

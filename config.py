@@ -5,8 +5,10 @@ APP_NAME = "Scoliosis Detection & Measurement UI"
 WINDOW_WIDTH = 1440
 WINDOW_HEIGHT = 900
 
-# Image types the app accepts.
+# Image types the app accepts. DICOM files are also recognised without an
+# extension (modules/image_io.py).
 SUPPORTED_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
+DICOM_EXTENSIONS = (".dcm", ".dicom")
 
 # Inference server endpoint. Can be changed in the Settings dialog.
 INFERENCE_API_URL = "http://127.0.0.1:4000/predict"

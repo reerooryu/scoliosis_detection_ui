@@ -144,7 +144,7 @@ Open Settings (`Ctrl+,`) and set **Inference API URL** to `http://<server-addres
 
 ### Step 4. Analyse an X-ray
 
-1. Drag a JPG or PNG onto the Load page, or use File → Open Image.
+1. Drag a JPG, PNG or DICOM file onto the Load page, or use File → Open Image.
 2. Click **Submit** or press `Enter`. The landmarks, Cobb lines and measurements appear when the server answers.
 3. To correct a landmark, turn on Edit Mode (`Ctrl+E`) and drag it. The angles update as you drag.
 4. Export the result (`Ctrl+S`), or save a project (`Ctrl+Shift+S`) to continue later.
@@ -185,7 +185,7 @@ On macOS, use `Cmd` instead of `Ctrl`.
 
 ## What it does
 
-- **Load**: drag-and-drop or File → Open Image. JPG, JPEG and PNG.
+- **Load**: drag-and-drop or File → Open Image. JPG, PNG and DICOM (`.dcm`, `.dicom`, or PACS files with no extension; compressed files too). A DICOM is shown with its own display window, and MONOCHROME1 images are inverted, as a viewer would show them. Only the image is used: the patient details in the DICOM header are not sent to the server or saved in projects.
 - **Analyse**: the image is sent to the server in the background, so the window stays responsive. A moving bar in the status bar shows that a request is running.
 - **Overlay**: vertebra outlines, Cobb lines and labels, and the CSVL are drawn on top of the image. Each curve has its own color for its two lines, its label and its row in the measurement panel. The image itself is never changed. Each vertebra has a small level label (C7, T1 … L5); each curve's apex label is filled with the curve's color, and the whole-spine apex is larger.
 - **Edit**: drag landmarks in Edit Mode. When you release a landmark, the curves are chosen again by the same rules the server uses. Undo, Redo, and Reset Edits to return to the AI result.
@@ -200,7 +200,7 @@ Not built yet: PDF Report and CSV export (shown as "coming soon" in the Export d
 
 ## Current limits
 
-- Input is JPG, JPEG or PNG only. DICOM is not supported.
+- The model was trained on JPG exports from PACS. DICOM files are converted with their own display window, which can look slightly different from a PACS export, so check a few cases (export the same film as JPG and as DICOM, and compare) before relying on DICOM results.
 - CSVL deviation is in pixels, not mm. The image carries no pixel spacing.
 - Vertebrae are named by level, counted up from the lowest detected vertebra as L5. If the model misses a vertebra or finds one twice, every name shifts by one level.
 - Cobb angles are reported between 0 and 90 degrees.
@@ -242,13 +242,15 @@ graph TD
 | `modules/model_mock.py` | `ScoliosisModelEngine`: holds the result, recalculates angles, undo/redo. |
 | `modules/geometry.py` | Angle, curve, CSVL and apex math. Used by the app and the server. |
 | `modules/parser.py` | Sends the image to the server and checks the reply. |
+| `modules/image_io.py` | Opens images for display, upload and projects (JPG, PNG, DICOM). |
+| `modules/dicom.py` | Recognises DICOM files and converts them to an 8-bit image. |
 | `modules/project.py` | Reads and writes `.sdproj` files. |
 | `modules/export.py` | Export dialog. |
 | `modules/report_image.py` | Draws the exported JPG: X-ray, overlay and results panel. |
 | `modules/settings_dialog.py` | Settings dialog. |
 | `modules/validation.py` | Model Validation dialog. |
 | `modules/theme.py` | Dark theme for the toolbar and workspace. |
-| `tests/` | Tests for the math, the server's post-processing, and project save and open. |
+| `tests/` | Tests for the math, the server's post-processing, DICOM conversion, and project save and open. |
 
 ## Run the tests
 
@@ -263,7 +265,7 @@ The tests need no GPU, model or Detectron2. GitHub runs them on every push (Acti
 
 ```
 python -m pip install pyinstaller
-pyinstaller --noconsole --onefile app.py
+pyinstaller --noconsole --onefile --collect-all pylibjpeg --collect-all libjpeg --collect-all openjpeg app.py
 ```
 
 The result is in `dist/` (`dist\app.exe` on Windows).

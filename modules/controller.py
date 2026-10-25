@@ -15,6 +15,7 @@ from PySide6.QtGui import QPixmap
 from modules.model_mock import ScoliosisModelEngine
 from modules.parser import InferenceWorker, validate_inference_payload
 from modules.project import write_project, read_project, ProjectLoadError
+from modules.image_io import ImageLoadError, encoded_image
 
 logger = logging.getLogger(__name__)
 
@@ -232,15 +233,15 @@ class AnalysisController(QObject):
         if image_bytes is None:
             # First save after a fresh Submit: read the image once and keep
             # it in memory, so later saves do not need the original file.
+            # A DICOM is stored as a PNG of its image, without its header.
             try:
-                with open(self.session.image_path, "rb") as f:
-                    image_bytes = f.read()
-            except OSError as exc:
+                image_bytes, image_ext = encoded_image(self.session.image_path)
+            except (OSError, ImageLoadError) as exc:
                 self.error_dialog.emit(
                     "Save Project Failed", f"Could not read the source image: {exc}"
                 )
                 return False
-            image_ext = os.path.splitext(self.session.image_path)[1] or ".png"
+            image_ext = image_ext or ".png"
             original_filename = os.path.basename(self.session.image_path)
             self.session.image_bytes = image_bytes
             self.session.image_ext = image_ext

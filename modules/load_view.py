@@ -10,13 +10,10 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QSizePolicy
 )
 
-from config import SUPPORTED_IMAGE_EXTENSIONS
+from modules.image_io import ImageLoadError, is_supported_image, load_image
+from modules.dicom import is_dicom_file
 from modules.theme import ACCENT
 from modules.project import PROJECT_EXTENSION
-
-
-def _is_supported_image(path):
-    return os.path.splitext(path)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS
 
 
 def _is_project_file(path):
@@ -87,7 +84,7 @@ class DropZone(QFrame):
         browse_btn.clicked.connect(self._on_browse)
         layout.addWidget(browse_btn, alignment=Qt.AlignCenter)
 
-        hint = QLabel(f"Supported formats: JPG, JPEG, PNG, {PROJECT_EXTENSION}")
+        hint = QLabel(f"Supported formats: JPG, PNG, DICOM, {PROJECT_EXTENSION}")
         hint.setObjectName("MetricLabel")
         hint.setAlignment(Qt.AlignCenter)
         layout.addWidget(hint)
@@ -96,9 +93,11 @@ class DropZone(QFrame):
         """Open the file picker. Returns True if an image was staged."""
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Open Spine X-Ray or Project", "",
-            f"All Supported Files (*.jpg *.jpeg *.png *{PROJECT_EXTENSION});;"
+            f"All Supported Files (*.jpg *.jpeg *.png *.dcm *.dicom *{PROJECT_EXTENSION});;"
             f"Image Files (*.jpg *.jpeg *.png);;"
-            f"Scoliosis Project Files (*{PROJECT_EXTENSION})"
+            f"DICOM Files (*.dcm *.dicom);;"
+            f"Scoliosis Project Files (*{PROJECT_EXTENSION});;"
+            f"All Files (*)"
         )
         if not file_path:
             return False
@@ -110,10 +109,10 @@ class DropZone(QFrame):
         if _is_project_file(file_path):
             self.project_dropped.emit(file_path)
             return False
-        if not _is_supported_image(file_path):
+        if not is_supported_image(file_path):
             QMessageBox.warning(
                 self, "Unsupported File",
-                f"Please select a JPG, JPEG, or PNG image, or a {PROJECT_EXTENSION} project file."
+                f"Please select a JPG, PNG or DICOM image, or a {PROJECT_EXTENSION} project file."
             )
             return False
         self.file_dropped.emit(file_path)
@@ -122,7 +121,7 @@ class DropZone(QFrame):
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             path = event.mimeData().urls()[0].toLocalFile()
-            if _is_supported_image(path) or _is_project_file(path):
+            if is_supported_image(path) or _is_project_file(path):
                 self.setProperty("dragActive", True)
                 self.style().unpolish(self)
                 self.style().polish(self)
@@ -220,9 +219,10 @@ class LoadPage(QWidget):
         """Validates, previews, and stores the image path internally."""
         if not os.path.exists(file_path):
             return
-        pixmap = QPixmap(file_path)
-        if pixmap.isNull():
-            QMessageBox.critical(self, "Error", "Invalid or corrupted image file.")
+        try:
+            pixmap = QPixmap.fromImage(load_image(file_path))
+        except ImageLoadError as exc:
+            QMessageBox.critical(self, "Could Not Open Image", str(exc))
             return
 
         self.image_path = file_path
@@ -232,8 +232,9 @@ class LoadPage(QWidget):
         self.thumb_lbl.setFixedSize(scaled.size())
         self.file_name_lbl.setText(os.path.basename(file_path))
         size_kb = os.path.getsize(file_path) / 1024.0
+        kind = "  •  DICOM" if is_dicom_file(file_path) else ""
         self.file_meta_lbl.setText(
-            f"{pixmap.width()}×{pixmap.height()} px  •  {size_kb:.1f} KB"
+            f"{pixmap.width()}×{pixmap.height()} px  •  {size_kb:.1f} KB{kind}"
         )
         self.preview_frame.setVisible(True)
         self.submit_btn.setEnabled(True)

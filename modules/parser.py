@@ -4,7 +4,6 @@
 # OverlayLayer does the drawing.
 
 import logging
-import os
 import threading
 import time
 
@@ -12,6 +11,7 @@ import requests
 from PySide6.QtCore import QObject, Signal, Slot
 
 from config import INFERENCE_API_URL, INFERENCE_TIMEOUT
+from modules.image_io import ImageLoadError, encoded_image
 
 
 logger = logging.getLogger(__name__)
@@ -21,10 +21,6 @@ _MIME_TYPES = {
     ".jpeg": "image/jpeg",
     ".png": "image/png",
 }
-
-
-def _mime_for(path):
-    return _MIME_TYPES.get(os.path.splitext(path)[1].lower(), "application/octet-stream")
 
 
 class BackendUnavailableError(Exception):
@@ -79,16 +75,26 @@ def validate_inference_payload(data):
 
 
 def run_inference(image_path, api_url=INFERENCE_API_URL, timeout=INFERENCE_TIMEOUT):
-    """POST image_path to the server. Returns (result_dict, elapsed_seconds).
+    """POST the image at image_path to the server. Returns
+    (result_dict, elapsed_seconds). A DICOM file is sent as a PNG of its
+    converted image (modules/image_io.py).
+
+    The upload is named "image.<ext>", not after the file: X-ray file names
+    are often patient numbers, and the server doesn't need them.
 
     Raises BackendUnavailableError with a readable message on any failure,
     so the caller can let the user keep viewing the image and retry.
     """
     started = time.monotonic()
     try:
-        with open(image_path, "rb") as f:
-            files = {"file": (os.path.basename(image_path), f, _mime_for(image_path))}
-            response = requests.post(api_url, files=files, timeout=timeout)
+        image_bytes, ext = encoded_image(image_path)
+    except (OSError, ImageLoadError) as exc:
+        # The image was moved or deleted after it was loaded, or can't be read.
+        raise BackendUnavailableError(f"Could not read the image file: {exc}") from exc
+
+    try:
+        files = {"file": (f"image{ext}", image_bytes, _MIME_TYPES.get(ext, "application/octet-stream"))}
+        response = requests.post(api_url, files=files, timeout=timeout)
     except requests.exceptions.ConnectionError as exc:
         raise BackendUnavailableError(
             f"Could not reach the inference API at {api_url}.\n"
@@ -100,9 +106,6 @@ def run_inference(image_path, api_url=INFERENCE_API_URL, timeout=INFERENCE_TIMEO
         ) from exc
     except requests.exceptions.RequestException as exc:
         raise BackendUnavailableError(f"Inference request failed: {exc}") from exc
-    except OSError as exc:
-        # The image was moved or deleted after it was loaded.
-        raise BackendUnavailableError(f"Could not read the image file: {exc}") from exc
 
     if response.status_code != 200:
         raise BackendUnavailableError(

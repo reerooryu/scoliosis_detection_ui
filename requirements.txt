@@ -1,2 +1,9 @@
 PySide6>=6.5.0
 requests>=2.28.0
+numpy>=1.24.0
+# DICOM support: pydicom reads the files; the pylibjpeg packages decode the
+# JPEG, JPEG-LS and JPEG 2000 compression that many PACS exports use.
+pydicom>=3.0
+pylibjpeg>=2.0
+pylibjpeg-libjpeg>=2.1
+pylibjpeg-openjpeg>=2.3
