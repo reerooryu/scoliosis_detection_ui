@@ -2,6 +2,10 @@
 
 # Application Window Configuration
 APP_NAME = "Scoliosis Detection & Measurement UI"
+# Version of this app. A release on GitHub is tagged "v" + APP_VERSION; the
+# app tells the user when GitHub has a newer one (modules/updates.py).
+APP_VERSION = "0.1.0"
+GITHUB_REPO = "reerooryu/scoliosis_detection_ui"
 WINDOW_WIDTH = 1440
 WINDOW_HEIGHT = 900
 
@@ -10,9 +14,22 @@ WINDOW_HEIGHT = 900
 SUPPORTED_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
 DICOM_EXTENSIONS = (".dcm", ".dicom")
 
-# Inference server endpoint. Can be changed in the Settings dialog.
+# Where the AI model runs (changed in Settings):
+#   "local"  -- on this computer, with a model file the user chooses;
+#   "server" -- on an inference server (server.py) at an address.
+DEFAULT_INFERENCE_MODE = "local"
 INFERENCE_API_URL = "http://127.0.0.1:4000/predict"
-INFERENCE_TIMEOUT = 120  # seconds
+INFERENCE_TIMEOUT = 120  # seconds, server mode only
+# Name of the model file sent to testers. If it sits next to the app it is
+# found without asking.
+LOCAL_MODEL_FILENAME = "ScoliosisAI_model.pth"
+
+# To move every user to one mode or server, set these in a release. They
+# override what users saved in Settings; None means "use Settings".
+# Example: FORCED_INFERENCE_MODE = "server"
+#          FORCED_API_URL = "https://example.org/predict"
+FORCED_INFERENCE_MODE = None
+FORCED_API_URL = None
 
 # Keypoint order within each vertebra.
 KP_CENTER = 0

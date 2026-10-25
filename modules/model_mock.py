@@ -12,9 +12,12 @@ from modules.geometry import (
 # Maximum undo steps. Each step is a full copy of the result.
 UNDO_HISTORY_LIMIT = 50
 
-# Field in the result for the processing time: the full round trip in
-# seconds (upload, model, reply). Saved in exports and projects.
+# Fields in the result for the processing time in seconds and where the
+# model ran ("local" or "server"). Saved in exports and projects.
+# Server: the full round trip (upload, model, reply). Local: the model run,
+# without the one-time model load.
 PROCESSING_TIME_KEY = "processing_time_seconds"
+INFERENCE_MODE_KEY = "inference_mode"
 
 class ScoliosisModelEngine:
     def __init__(self):
@@ -78,9 +81,16 @@ class ScoliosisModelEngine:
         """Returns original image input dimensions [height, width]."""
         return self.data.get("input_shape", [1832, 1190])
 
-    def set_processing_time(self, seconds):
-        """Record the analysis time (full round trip, in seconds)."""
+    def set_processing_time(self, seconds, mode=None):
+        """Record the analysis time in seconds and where the model ran."""
         self.data[PROCESSING_TIME_KEY] = round(float(seconds), 3)
+        if mode:
+            self.data[INFERENCE_MODE_KEY] = mode
+
+    def get_inference_mode(self):
+        """"local", "server", or None (older results)."""
+        value = self.data.get(INFERENCE_MODE_KEY) if self.data else None
+        return value if isinstance(value, str) else None
 
     def get_processing_time(self):
         """The analysis time in seconds, or None (e.g. older projects)."""

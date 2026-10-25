@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 class AnalysisController(QObject):
     """Runs the workflow for one AnalysisSession + OverlayLayer pair.
 
-    api_url_provider is a function, not a fixed value, so each request uses
-    the URL currently saved in Settings.
+    settings_provider is a function returning an InferenceSettings, not a
+    fixed value, so each request uses what is currently saved in Settings.
     """
 
     status_message = Signal(str)
@@ -32,11 +32,11 @@ class AnalysisController(QObject):
     busy_changed = Signal(bool)         # True while an inference request is in flight
     analysis_completed = Signal(float)  # elapsed seconds -- for the "Processing Time" metric
 
-    def __init__(self, session, overlay_layer, api_url_provider, timeout, parent=None):
+    def __init__(self, session, overlay_layer, settings_provider, timeout, parent=None):
         super().__init__(parent)
         self.session = session
         self.overlay_layer = overlay_layer
-        self._api_url_provider = api_url_provider
+        self._settings_provider = settings_provider
         self._timeout = timeout
 
         self._next_request_id = 0
@@ -46,6 +46,8 @@ class AnalysisController(QObject):
         # request_id -> (QThread, InferenceWorker). Both are held until the
         # thread finishes so Qt does not delete them too early.
         self._inference_jobs = {}
+        # request_id -> "local" / "server", saved with the result.
+        self._request_modes = {}
 
     # ------------------------------------------------------------------
     # Submit / retry
@@ -72,7 +74,7 @@ class AnalysisController(QObject):
         self._run_inference(self.session.image_path)
 
     def _run_inference(self, image_path):
-        api_url = self._api_url_provider()
+        settings = self._settings_provider()
         self._next_request_id += 1
         request_id = self._next_request_id
         self._active_request_id = request_id
@@ -81,12 +83,14 @@ class AnalysisController(QObject):
 
         thread = QThread(self)
         thread.setProperty("request_id", request_id)
-        worker = InferenceWorker(request_id, image_path, api_url=api_url, timeout=self._timeout)
+        worker = InferenceWorker(request_id, image_path, settings, timeout=self._timeout)
         worker.moveToThread(thread)
+        self._request_modes[request_id] = settings.mode
 
         thread.started.connect(worker.run)
         worker.succeeded.connect(self._on_inference_succeeded)
         worker.failed.connect(self._on_inference_failed)
+        worker.status.connect(self._on_inference_status)
         # finished fires after success or failure; Qt then stops the thread
         # and deletes both objects.
         worker.finished.connect(thread.quit)
@@ -106,7 +110,7 @@ class AnalysisController(QObject):
         model_engine = ScoliosisModelEngine()
         model_engine.load_from_dict(data)
         # Saved with the result, so exports and projects include it.
-        model_engine.set_processing_time(elapsed)
+        model_engine.set_processing_time(elapsed, self._request_modes.get(request_id))
         # Match the result to the size of the image on the canvas (already
         # decoded, so the file is not read again). Skip this if there is no
         # image: a 0x0 size would move every landmark to (0, 0).
@@ -126,6 +130,10 @@ class AnalysisController(QObject):
         self.status_message.emit(f"Analysis complete — {count} vertebrae detected.")
         self.analysis_completed.emit(elapsed)
 
+    def _on_inference_status(self, request_id, message):
+        if request_id == self._active_request_id:
+            self.status_message.emit(message)
+
     def _on_inference_failed(self, request_id, message):
         if request_id != self._active_request_id:
             return
@@ -136,7 +144,7 @@ class AnalysisController(QObject):
         self.error_dialog.emit(
             "AI Analysis Unavailable",
             f"{message}\n\nYou can still view and zoom the image. "
-            "Use View → Retry AI Analysis once the backend is reachable."
+            "Use View → Retry AI Analysis after fixing the problem."
         )
 
     def _on_inference_thread_finished(self):
@@ -144,6 +152,7 @@ class AnalysisController(QObject):
         thread = self.sender()
         request_id = thread.property("request_id") if thread is not None else None
         self._inference_jobs.pop(request_id, None)
+        self._request_modes.pop(request_id, None)
 
     def _cancel_inference_jobs(self):
         """Mark every outstanding request as stale. A running HTTP call

@@ -246,7 +246,9 @@ class _Panel:
             self.top.append([("text", "CSVL {:.0f} px".format(deviation), small, TEXT_MUTED)])
         seconds = engine.get_processing_time()
         if seconds is not None:
-            self.top.append([("text", "Processing {:.2f} s".format(seconds), small, TEXT_MUTED)])
+            mode = engine.get_inference_mode()
+            text = "Processing {:.2f} s".format(seconds) + (" ({})".format(mode) if mode else "")
+            self.top.append([("text", text, small, TEXT_MUTED)])
         if edited:
             self.top.append([("text", "Edited by hand", small, TEXT_EDITED)])
 

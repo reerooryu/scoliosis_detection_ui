@@ -7,28 +7,44 @@
 # passes user actions to the controller, and refreshes itself from the
 # session's and controller's signals.
 
+import logging
 import os
+import threading
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QPixmap, QAction, QKeySequence
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QPixmap, QAction, QKeySequence, QDesktopServices
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QFrame,
     QLabel, QPushButton, QStackedWidget, QToolBar, QSizePolicy, QStatusBar,
     QMessageBox, QDialog, QFileDialog, QProgressBar
 )
 
-from config import APP_NAME, WINDOW_WIDTH, WINDOW_HEIGHT, INFERENCE_TIMEOUT
+from config import APP_NAME, APP_VERSION, WINDOW_WIDTH, WINDOW_HEIGHT, INFERENCE_TIMEOUT
 from modules import theme
 from modules.load_view import LoadPage
 from modules.canvas import ImageCanvas
 from modules.overlay import OverlayLayer
 from modules.session import AnalysisSession
 from modules.controller import AnalysisController
-from modules.settings_dialog import SettingsDialog
+from modules.settings_dialog import MODE_LOCAL, SettingsDialog, choose_model_file
+from modules import parser, updates
+from modules.app_paths import LOG_PATH
 from modules.export import ExportDialog
 from modules.validation import ValidationDialog
 from modules.project import PROJECT_EXTENSION
 from modules.image_io import ImageLoadError, load_image
+
+logger = logging.getLogger(__name__)
+
+
+def processing_time_text(engine):
+    """The Processing Time panel value, e.g. "1.62s (local)"; "-" if the
+    result has no time (older projects)."""
+    seconds = engine.get_processing_time()
+    if seconds is None:
+        return "-"
+    mode = engine.get_inference_mode()
+    return "{:.2f}s ({})".format(seconds, mode) if mode else "{:.2f}s".format(seconds)
 
 
 class MetricRow(QFrame):
@@ -157,6 +173,9 @@ class WorkspacePage(QWidget):
 
 
 class MainWindow(QMainWindow):
+    # Sent from the update-check thread; Qt delivers it on the GUI thread.
+    update_available = Signal(object)  # updates.UpdateInfo
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(APP_NAME)
@@ -197,7 +216,7 @@ class MainWindow(QMainWindow):
         self.controller = AnalysisController(
             self.session,
             self.overlay_layer,
-            api_url_provider=SettingsDialog.get_saved_api_url,
+            settings_provider=SettingsDialog.get_inference_settings,
             timeout=INFERENCE_TIMEOUT,
             parent=self,
         )
@@ -223,6 +242,99 @@ class MainWindow(QMainWindow):
         self.load_page.project_opened.connect(self._on_load_page_project_opened)
         self.workspace_page.export_btn.clicked.connect(self._on_export_clicked)
         self.workspace_page.reset_btn.clicked.connect(self._on_reset)
+
+        # Once the window is on screen: find the model file, start loading it.
+        QTimer.singleShot(0, self._on_startup)
+
+    # ------------------------------------------------------------------
+    # Startup: the local model file
+    # ------------------------------------------------------------------
+
+    def _on_startup(self):
+        self._start_update_check()
+        self._ensure_model_file()
+        self._preload_local_model()
+
+    def _start_update_check(self):
+        """Ask GitHub for a newer release in the background (a few seconds
+        at most; no internet just means no message)."""
+        self.update_available.connect(self._on_update_available)
+
+        def check():
+            info = updates.check_for_update()
+            if info is not None:
+                self.update_available.emit(info)
+
+        threading.Thread(target=check, name="update-check", daemon=True).start()
+
+    def _on_about(self):
+        settings = SettingsDialog.get_inference_settings()
+        where = ("this computer — " + (settings.weights_path or "no model file chosen")
+                 if settings.mode == MODE_LOCAL else "server — " + settings.api_url)
+        QMessageBox.about(
+            self, "About",
+            f"{APP_NAME}\nVersion {APP_VERSION}\n\nAI model runs on: {where}\n\n"
+            f"Log file (send it with any problem report):\n{LOG_PATH}\n\n"
+            "For research and testing only. Not for clinical decisions.",
+        )
+
+    def _on_update_available(self, info):
+        box = QMessageBox(self)
+        box.setWindowTitle("Update Available")
+        box.setIcon(QMessageBox.Information)
+        box.setText(
+            f"A new version of the app is available: {info.version} "
+            f"(you have {APP_VERSION}).\n\n"
+            "Open the download page? Download the zip for your computer and "
+            "replace the old app folder with the new one. Your settings and "
+            "model file are kept."
+        )
+        if info.notes:
+            box.setDetailedText(info.notes)
+        open_btn = box.addButton("Open Download Page", QMessageBox.AcceptRole)
+        box.addButton("Later", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is open_btn:
+            QDesktopServices.openUrl(QUrl(info.url))
+
+    def _ensure_model_file(self):
+        """Local mode needs a model file. If none is saved or found next to
+        the app, ask for it once now rather than failing on the first image."""
+        settings = SettingsDialog.get_inference_settings()
+        if settings.mode != MODE_LOCAL or settings.weights_path:
+            return
+        QMessageBox.information(
+            self, "Choose the AI Model File",
+            "This app runs the AI on your computer and needs the model file "
+            "(ScoliosisAI_model.pth) that came with it.\n\n"
+            "Please choose that file in the next window. You can change it later "
+            "in Settings → AI model.",
+        )
+        path = choose_model_file(self)
+        if path:
+            SettingsDialog.save_weights_path(path)
+        else:
+            self.statusBar().showMessage(
+                "No AI model file chosen — choose it in Settings before analysing an image."
+            )
+
+    def _preload_local_model(self):
+        """Load the local model in the background, so the first analysis
+        does not wait for it. A failure is only logged here; it is shown if
+        the user then analyses an image."""
+        settings = SettingsDialog.get_inference_settings()
+        if settings.mode != MODE_LOCAL or not settings.weights_path:
+            return
+        if parser.is_local_model_loaded(settings.weights_path):
+            return
+
+        def load():
+            try:
+                parser.load_local_model(settings.weights_path)
+            except Exception as exc:
+                logger.warning("Preloading the AI model failed: %s", exc)
+
+        threading.Thread(target=load, name="preload-model", daemon=True).start()
 
     def _build_menu_and_toolbar(self):
         menu_bar = self.menuBar()
@@ -344,6 +456,13 @@ class MainWindow(QMainWindow):
         self.validation_action = QAction("&Model Validation...", self)
         self.validation_action.triggered.connect(self._on_open_validation)
         tools_menu.addAction(self.validation_action)
+
+        # --- Help menu ---
+        help_menu = menu_bar.addMenu("&Help")
+        about_action = QAction("&About", self)
+        about_action.setMenuRole(QAction.AboutRole)  # goes in the app menu on a Mac
+        about_action.triggered.connect(self._on_about)
+        help_menu.addAction(about_action)
 
         # --- Toolbar: zoom / edit / undo-redo / reset-edits / settings, far right ---
         self.toolbar = QToolBar("Main Toolbar", self)
@@ -483,7 +602,9 @@ class MainWindow(QMainWindow):
         return texts
 
     def _on_analysis_completed(self, elapsed):
-        self.workspace_page.metrics["Processing Time"].set_value("{:.2f}s (API round-trip)".format(elapsed))
+        engine = self.session.model_engine
+        if engine is not None:
+            self.workspace_page.metrics["Processing Time"].set_value(processing_time_text(engine))
 
     def _on_edit_state_changed(self):
         self.undo_action.setEnabled(self.session.can_undo())
@@ -553,6 +674,7 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self)
         if dialog.exec() == QDialog.Accepted:
             self._apply_curve_colors()
+            self._preload_local_model()
 
     def _apply_curve_colors(self):
         """Use the saved curve colors on the image and in the panel."""
@@ -600,9 +722,8 @@ class MainWindow(QMainWindow):
         if self.controller.open_project(path):
             self.stack.setCurrentWidget(self.workspace_page)
             # Show the time saved with the project ("-" for older projects).
-            seconds = self.session.model_engine.get_processing_time()
             self.workspace_page.metrics["Processing Time"].set_value(
-                "{:.2f}s (API round-trip)".format(seconds) if seconds is not None else "-"
+                processing_time_text(self.session.model_engine)
             )
             # Draw the overlay once the page is visible and laid out; label
             # placement needs the final viewport size.
