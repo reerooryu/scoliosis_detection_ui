@@ -4,6 +4,7 @@
 # OverlayLayer does the drawing.
 
 import logging
+import os
 import threading
 import time
 
@@ -79,8 +80,8 @@ def run_inference(image_path, api_url=INFERENCE_API_URL, timeout=INFERENCE_TIMEO
     (result_dict, elapsed_seconds). A DICOM file is sent as a PNG of its
     converted image (modules/image_io.py).
 
-    The upload is named "image.<ext>", not after the file: X-ray file names
-    are often patient numbers, and the server doesn't need them.
+    The upload keeps the file's own name (often the hospital number), which
+    helps when matching requests to cases.
 
     Raises BackendUnavailableError with a readable message on any failure,
     so the caller can let the user keep viewing the image and retry.
@@ -93,7 +94,7 @@ def run_inference(image_path, api_url=INFERENCE_API_URL, timeout=INFERENCE_TIMEO
         raise BackendUnavailableError(f"Could not read the image file: {exc}") from exc
 
     try:
-        files = {"file": (f"image{ext}", image_bytes, _MIME_TYPES.get(ext, "application/octet-stream"))}
+        files = {"file": (os.path.basename(image_path), image_bytes, _MIME_TYPES.get(ext, "application/octet-stream"))}
         response = requests.post(api_url, files=files, timeout=timeout)
     except requests.exceptions.ConnectionError as exc:
         raise BackendUnavailableError(
