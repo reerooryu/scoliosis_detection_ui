@@ -1,15 +1,15 @@
 # Scoliosis Detection & Measurement UI
 
-Desktop app for measuring scoliosis on a spine X-ray. Load an image, the AI server finds the vertebrae and the Cobb angles, you check and adjust the landmarks, then export the result.
+Desktop app for measuring scoliosis on a spine X-ray. Load an image, the AI finds the vertebrae and the Cobb angles, you check and adjust the landmarks, then export the result.
 
-There are two programs:
+The AI model can run in two places, chosen in Settings → AI model:
 
-| Program | File | What it does |
+| Mode | What happens | Needs |
 |--|--|--|
-| Server | `server.py` | Runs the AI model. Needs the model weights file. A GPU is recommended. |
-| App | `app.py` | The desktop program. Sends the image to the server and shows the result. |
+| **Local** (default) | The app runs the model on this computer. | The model file. |
+| **Server** | The app sends the image to `server.py` on another computer. | A running server and its address. |
 
-They can run on the same computer or on two different ones.
+**Testers** do not need anything below: they get the ready-made app (Windows and Mac) from the [Releases](https://github.com/reerooryu/scoliosis_detection_ui/releases) page and the model file privately. See [Make a release](#make-a-release).
 
 ## Install
 
@@ -52,9 +52,9 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-If the server runs on another computer, stop here and go to [Run](#run), Step 2.
+This is enough for Server mode. For Local mode, or to run the server, continue.
 
-### Step 4. Install the server
+### Step 4. Install the AI model libraries
 
 ```
 python -m pip install -r requirements-server.txt
@@ -66,9 +66,9 @@ python -m pip install --no-build-isolation "git+https://github.com/facebookresea
 - Optional: `python -m pip install ninja` first makes the Detectron2 build much faster.
 - NVIDIA GPU on Windows: the default PyTorch there is CPU-only. Before the two commands above, install the CUDA build with the command from https://pytorch.org/get-started/locally/.
 
-### Step 5. Add the model weights
+### Step 5. Add the model file
 
-The weights are not in this repository. Get the file `model_final_run.pth` from the project team and copy it into this folder (create the folder if it does not exist):
+The model file is confidential and not in this repository. Get `model_final_run.pth` from the project team and copy it into this folder (create the folder if it does not exist):
 
 `model/model_t001_6_effb5_mask_kp_2cls/`
 
@@ -78,7 +78,7 @@ This is a location, not a command. To check the file is in place, run:
 ls model/model_t001_6_effb5_mask_kp_2cls
 ```
 
-It should list `model_final_run.pth`.
+It should list `model_final_run.pth`. The app finds it there by itself in Local mode; anywhere else, choose it in Settings → AI model.
 
 ## Quick start (after installing)
 
@@ -120,7 +120,9 @@ python server.py
 
 ## Run
 
-### Step 1. Start the server
+In Local mode, just start the app (Step 2). The first analysis takes longer while the model loads; after that it takes a few seconds per image.
+
+### Step 1. Start the server (Server mode only)
 
 ```
 python server.py
@@ -138,9 +140,12 @@ In a second terminal, with the virtual environment activated (on Windows, run `S
 python app.py
 ```
 
-### Step 3. Set the server address (only if the server is on another computer)
+### Step 3. Choose where the AI runs
 
-Open Settings (`Ctrl+,`) and set **Inference API URL** to `http://<server-address>:4000/predict`. The default is `http://127.0.0.1:4000/predict`.
+Open Settings (`Ctrl+,`) → **AI model**:
+
+- **On this computer (Local)**: choose the model file with Browse.
+- **On a server**: set the address to `http://<server-address>:4000/predict`. The default is `http://127.0.0.1:4000/predict` (a server on this computer).
 
 ### Step 4. Analyse an X-ray
 
@@ -149,7 +154,7 @@ Open Settings (`Ctrl+,`) and set **Inference API URL** to `http://<server-addres
 3. To correct a landmark, turn on Edit Mode (`Ctrl+E`) and drag it. The angles update as you drag.
 4. Export the result (`Ctrl+S`), or save a project (`Ctrl+Shift+S`) to continue later.
 
-If the server cannot be reached, the image still opens. Start the server, then press `F5` to retry.
+If the AI fails (no model file, server not reachable), the image still opens. Fix the problem, then press `F5` to retry.
 
 ## Keyboard shortcuts
 
@@ -186,14 +191,16 @@ On macOS, use `Cmd` instead of `Ctrl`.
 ## What it does
 
 - **Load**: drag-and-drop or File → Open Image. JPG, PNG and DICOM (`.dcm`, `.dicom`, or PACS files with no extension; compressed files too). A DICOM is shown with its own display window, and MONOCHROME1 images are inverted, as a viewer would show them. Only the image is used: the patient details in the DICOM header are not sent to the server or saved in projects.
-- **Analyse**: the image is sent to the server in the background, so the window stays responsive. A moving bar in the status bar shows that a request is running.
+- **Analyse**: the model runs in the background (on this computer or the server), so the window stays responsive. A moving bar in the status bar shows that it is running.
 - **Overlay**: vertebra outlines, Cobb lines and labels, and the CSVL are drawn on top of the image. Each curve has its own color for its two lines, its label and its row in the measurement panel. The image itself is never changed. Each vertebra has a small level label (C7, T1 … L5); each curve's apex label is filled with the curve's color, and the whole-spine apex is larger.
 - **Edit**: drag landmarks in Edit Mode. When you release a landmark, the curves are chosen again by the same rules the server uses. Undo, Redo, and Reset Edits to return to the AI result.
 - **Measurements**: Primary Cobb Angle, one row per curve (up to four), Apex, CSVL Deviation, Vertebrae, Processing Time.
 - **Save / Open Project**: a `.sdproj` file stores the image, your edits and the original AI result, so you can continue later without running the AI again.
 - **Export**: raw JSON, and a JPG of the X-ray with the overlay and a results panel on the right. Files are named after the image with a timestamp. The JPG names vertebrae by level, counted up from the lowest one as L5 (L5 ... L1, T12 ... T1, C7 ... C1; the top may be off the image).
-- **Processing time**: the full round trip (upload, model, reply). Shown in the panel, and saved in the JSON (`processing_time_seconds`), the JPG and project files.
-- **Settings**: server address, the color of each curve, default export folder.
+- **Processing time**: Local mode: the model run, without the one-time model load. Server mode: the full round trip (upload, model, reply). Shown in the panel with the mode, e.g. `1.62s (local)`, and saved in the JSON (`processing_time_seconds`, `inference_mode`), the JPG and project files.
+- **Settings**: where the AI runs (Local with a model file, or a server address), the color of each curve, default export folder.
+- **Updates**: at start, the app asks GitHub for a newer release and offers to open its download page. With no internet it says nothing.
+- **Log file**: Help → About shows the version and the log file, for problem reports.
 - **Model Validation** (Tools menu): compares a prediction JSON with a ground-truth label JSON. For the ML team.
 
 Not built yet: PDF Report and CSV export (shown as "coming soon" in the Export dialog).
@@ -219,19 +226,22 @@ graph TD
     Controller --> Session["session.py - state for one image"]
     Controller --> Overlay["overlay.py - landmarks, Cobb lines, CSVL"]
     Controller --> Project["project.py - .sdproj save and open"]
-    Controller --> Parser["parser.py - HTTP client"]
+    Controller --> Parser["parser.py - gets the AI result"]
     Session --> Engine["model_mock.py - ScoliosisModelEngine"]
     Engine --> Geometry["geometry.py - angle math"]
-    Parser -->|POST image| Server["server.py - FastAPI inference server"]
-    Server --> Post["postprocess.py - model output to result"]
+    Parser -->|Local| Inference["inference.py - the AI model"]
+    Parser -->|Server: POST image| Server["server.py - FastAPI inference server"]
+    Server --> Inference
+    Inference --> Post["postprocess.py - model output to result"]
     Post --> Geometry
 ```
 
 | File | Purpose |
 |--|--|
-| `app.py` | Starts the app. |
-| `config.py` | Constants: window size, server URL, keypoint order, colors. |
+| `app.py` | Starts the app. `--self-test` checks the build can run the model. |
+| `config.py` | Constants: version, default AI mode, server URL, keypoint order, colors. |
 | `server.py` | Inference server: `POST /predict`, `GET /health`. |
+| `modules/inference.py` | The AI model: builds it, loads the model file, runs one image. Used by Local mode and the server. |
 | `modules/postprocess.py` | Turns the model output into the result: scaling, filtering, angles, curves. No Detectron2 needed. |
 | `modules/main_window.py` | Main window, menus, toolbar, measurement panel. |
 | `modules/controller.py` | Workflow: submit, retry, edits, project save and open. |
@@ -241,7 +251,9 @@ graph TD
 | `modules/overlay.py` | Landmarks, Cobb lines and labels, CSVL. |
 | `modules/model_mock.py` | `ScoliosisModelEngine`: holds the result, recalculates angles, undo/redo. |
 | `modules/geometry.py` | Angle, curve, CSVL and apex math. Used by the app and the server. |
-| `modules/parser.py` | Sends the image to the server and checks the reply. |
+| `modules/parser.py` | Gets the AI result (local model or server) and checks it. |
+| `modules/updates.py` | Asks GitHub for a newer release. |
+| `modules/app_paths.py` | Finds the model file and the log file. |
 | `modules/image_io.py` | Opens images for display, upload and projects (JPG, PNG, DICOM). |
 | `modules/dicom.py` | Recognises DICOM files and converts them to an 8-bit image. |
 | `modules/project.py` | Reads and writes `.sdproj` files. |
@@ -250,31 +262,41 @@ graph TD
 | `modules/settings_dialog.py` | Settings dialog. |
 | `modules/validation.py` | Model Validation dialog. |
 | `modules/theme.py` | Dark theme for the toolbar and workspace. |
-| `tests/` | Tests for the math, the server's post-processing, DICOM conversion, and project save and open. |
+| `tests/` | Tests for the math, the server's post-processing, DICOM conversion, project save and open, and the update check. |
+| `packaging/ScoliosisAI.spec` | PyInstaller recipe for the all-in-one app. |
+| `.github/workflows/release.yml` | Builds the Windows and Mac apps and publishes a release. |
 
 ## Run the tests
 
 ```
-python -m pip install pytest numpy
+python -m pip install pytest numpy pydicom requests
 pytest
 ```
 
 The tests need no GPU, model or Detectron2. GitHub runs them on every push (Actions tab).
 
-## Build a standalone app (optional)
+## Make a release
 
-```
-python -m pip install pyinstaller
-pyinstaller --noconsole --onefile --collect-all pylibjpeg --collect-all libjpeg --collect-all openjpeg app.py
-```
+GitHub builds the all-in-one app (app, model code and Python; no model file) for Windows and Mac (Apple Silicon). Nothing needs installing on the testers' computers.
 
-The result is in `dist/` (`dist\app.exe` on Windows).
+1. Raise `APP_VERSION` in `config.py` (for example to `0.2.0`) and commit.
+2. Push a tag with the same version: `git tag v0.2.0` then `git push origin v0.2.0`.
+3. Wait for Actions → **Build app** to finish (about 30–60 minutes). It tests the built app, then publishes a release with `ScoliosisAI-Windows.zip` and `ScoliosisAI-Mac.zip`.
+
+Testers who already have the app are told about the new version when they next open it.
+
+To try a build without publishing it: Actions → **Build app** → Run workflow. The zips are under that run's Artifacts.
+
+The model file is sent to testers privately, never through GitHub. To build on your own computer instead: install everything (Install, Steps 1–4) plus `python -m pip install pyinstaller`, then `pyinstaller packaging/ScoliosisAI.spec --noconfirm`. The app is in `dist/`.
+
+**Moving everyone to a server later**: set `FORCED_INFERENCE_MODE = "server"` and `FORCED_API_URL` in `config.py` and make a release. Those override what users saved in Settings. Changing `DEFAULT_INFERENCE_MODE` instead only affects people who never changed the setting.
 
 ## Files not in this repository
 
 These are excluded by `.gitignore` and must be supplied locally:
 
 - `model/`: trained model weights.
+- `internal_release/`: the folder sent to testers (model file and instructions).
 - `detectron2_source/`: a local Detectron2 checkout.
 - `test_api_visualization.ipynb`: internal notebook showing the original API calls.
 - `blueprint.md`: the original internal build spec.
