@@ -199,7 +199,7 @@ On macOS, use `Cmd` instead of `Ctrl`.
 - **Export**: raw JSON, and a JPG of the X-ray with the overlay and a results panel on the right. Files are named after the image with a timestamp. The JPG names vertebrae by level, counted up from the lowest one as L5 (L5 ... L1, T12 ... T1, C7 ... C1; the top may be off the image).
 - **Processing time**: Local mode: the model run, without the one-time model load. Server mode: the full round trip (upload, model, reply). Shown in the panel with the mode, e.g. `1.62s (local)`, and saved in the JSON (`processing_time_seconds`, `inference_mode`), the JPG and project files.
 - **Settings**: where the AI runs (Local with a model file, or a server address), the color of each curve, default export folder.
-- **Updates**: at start, the app asks GitHub for a newer release and offers to open its download page. With no internet it says nothing.
+- **Updates**: the ready-made app updates itself. At start it quietly checks GitHub for a newer release and downloads it in the background. When the download is ready, it asks **Update Now** (restarts in a few seconds) or **Later** (installs at the next start). The model file and settings are kept. If it can't update itself (run from source, or a Mac app outside Applications), it offers the download page instead. With no internet it says nothing.
 - **Log file**: Help → About shows the version and the log file, for problem reports.
 - **Model Validation** (Tools menu): compares a prediction JSON with a ground-truth label JSON. For the ML team.
 
@@ -253,6 +253,7 @@ graph TD
 | `modules/geometry.py` | Angle, curve, CSVL and apex math. Used by the app and the server. |
 | `modules/parser.py` | Gets the AI result (local model or server) and checks it. |
 | `modules/updates.py` | Asks GitHub for a newer release. |
+| `modules/updater.py` | Downloads, checks and installs an update (Windows and Mac). |
 | `modules/app_paths.py` | Finds the model file and the log file. |
 | `modules/image_io.py` | Opens images for display, upload and projects (JPG, PNG, DICOM). |
 | `modules/dicom.py` | Recognises DICOM files and converts them to an 8-bit image. |
@@ -262,7 +263,7 @@ graph TD
 | `modules/settings_dialog.py` | Settings dialog. |
 | `modules/validation.py` | Model Validation dialog. |
 | `modules/theme.py` | Dark theme for the toolbar and workspace. |
-| `tests/` | Tests for the math, the server's post-processing, DICOM conversion, project save and open, and the update check. |
+| `tests/` | Tests for the math, the server's post-processing, DICOM conversion, project save and open, and updates. GitHub runs them on Linux, Windows and Mac. |
 | `packaging/ScoliosisAI.spec` | PyInstaller recipe for the all-in-one app. |
 | `.github/workflows/release.yml` | Builds the Windows and Mac apps and publishes a release. |
 
@@ -283,7 +284,7 @@ GitHub builds the all-in-one app (app, model code and Python; no model file) for
 2. Push a tag with the same version: `git tag v0.2.0` then `git push origin v0.2.0`.
 3. Wait for Actions → **Build app** to finish (about 30–60 minutes). It tests the built app, then publishes a release with `ScoliosisAI-Windows.zip` and `ScoliosisAI-Mac.zip`.
 
-Testers who already have the app are told about the new version when they next open it.
+Testers who already have the app get it by themselves: the next time they open the app, it downloads the new version and asks to update now or later.
 
 To try a build without publishing it: Actions → **Build app** → Run workflow. The zips are under that run's Artifacts.
 
