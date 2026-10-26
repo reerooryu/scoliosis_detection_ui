@@ -27,7 +27,7 @@ from modules.overlay import OverlayLayer
 from modules.session import AnalysisSession
 from modules.controller import AnalysisController
 from modules.settings_dialog import MODE_LOCAL, SettingsDialog, choose_model_file
-from modules import parser, updates
+from modules import parser, updater, updates
 from modules.app_paths import LOG_PATH
 from modules.export import ExportDialog
 from modules.validation import ValidationDialog
@@ -174,7 +174,8 @@ class WorkspacePage(QWidget):
 
 class MainWindow(QMainWindow):
     # Sent from the update-check thread; Qt delivers it on the GUI thread.
-    update_available = Signal(object)  # updates.UpdateInfo
+    update_available = Signal(object)  # updates.UpdateInfo: offer the download page
+    update_ready = Signal(object)      # updates.UpdateInfo: downloaded, ready to install
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -231,6 +232,11 @@ class MainWindow(QMainWindow):
         self.controller.error_dialog.connect(self._on_error_dialog)
         self.controller.analysis_completed.connect(self._on_analysis_completed)
         self.controller.busy_changed.connect(self.busy_bar.setVisible)
+        self.controller.busy_changed.connect(self._on_busy_changed)
+
+        # "Update Now" closes the window; app.py then installs the update.
+        self.restart_for_update = False
+        self._waiting_update = None   # a ready update waiting for the analysis to finish
 
         # Overlay drag signals -> controller (landmark edit workflow).
         self.overlay_layer.signals.keypoint_moved.connect(self.controller.on_keypoint_dragged)
@@ -256,16 +262,62 @@ class MainWindow(QMainWindow):
         self._preload_local_model()
 
     def _start_update_check(self):
-        """Ask GitHub for a newer release in the background (a few seconds
-        at most; no internet just means no message)."""
+        """Look for a newer release in the background, without interrupting
+        the user. The packaged app also downloads and unpacks it there, then
+        asks "Update Now / Later" (modules/updater.py). Run from source, or
+        if the download fails, it offers the download page instead. No
+        internet just means no message."""
         self.update_available.connect(self._on_update_available)
+        self.update_ready.connect(self._on_update_ready)
+        install = updater.current_install()
 
         def check():
             info = updates.check_for_update()
-            if info is not None:
-                self.update_available.emit(info)
+            if info is None:
+                return
+            if install is not None and info.asset is not None:
+                try:
+                    updater.prepare_update(info, install)
+                except Exception as exc:
+                    logger.warning("Preparing update %s failed: %s", info.version, exc)
+                else:
+                    self.update_ready.emit(info)
+                    return
+            self.update_available.emit(info)
 
         threading.Thread(target=check, name="update-check", daemon=True).start()
+
+    def _on_update_ready(self, info):
+        """The new version is downloaded. Ask now or later, but not while an
+        analysis is running: then ask when it finishes."""
+        if self.controller.is_busy():
+            self._waiting_update = info
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Update Ready")
+        box.setIcon(QMessageBox.Information)
+        box.setText(f"Scoliosis AI v{info.version} is ready to install.")
+        box.setInformativeText(
+            f"You have v{APP_VERSION}.\n\n"
+            "Update Now: the app closes and opens again in a few seconds.\n"
+            "Later: the update installs by itself the next time you open the app."
+        )
+        if info.notes:
+            box.setDetailedText(info.notes)
+        now_btn = box.addButton("Update Now", QMessageBox.AcceptRole)
+        box.addButton("Later", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is now_btn:
+            self.restart_for_update = True
+            self.close()                 # asks about unsaved work first
+            if self.isVisible():         # the user chose to keep working
+                self.restart_for_update = False
+
+    def _on_busy_changed(self, busy):
+        if not busy and self._waiting_update is not None:
+            info, self._waiting_update = self._waiting_update, None
+            # Let the result appear first.
+            QTimer.singleShot(1500, lambda: self._on_update_ready(info))
 
     def _on_about(self):
         settings = SettingsDialog.get_inference_settings()

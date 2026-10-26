@@ -129,6 +129,12 @@ def main():
     if len(sys.argv) >= 3 and sys.argv[1] == "--self-test":
         sys.exit(self_test(*sys.argv[2:5]))
 
+    # A new version downloaded last time is installed before the window
+    # opens (packaged app only; see modules/updater.py).
+    from modules import updater
+    if updater.install_pending_update():
+        sys.exit(0)   # the new version is starting
+
     from PySide6.QtWidgets import QApplication
     from modules.main_window import MainWindow
 
@@ -138,7 +144,10 @@ def main():
     window = MainWindow()
     window.show()
 
-    sys.exit(app.exec())
+    exit_code = app.exec()
+    if window.restart_for_update:
+        updater.install_pending_update()   # "Update Now": swap and reopen
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

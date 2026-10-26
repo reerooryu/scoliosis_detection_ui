@@ -165,6 +165,10 @@ class AnalysisController(QObject):
         for _thread, worker in self._inference_jobs.values():
             worker.cancel()
 
+    def is_busy(self):
+        """True while an analysis result is awaited."""
+        return self._busy
+
     def has_pending_jobs(self):
         return bool(self._inference_jobs)
 
