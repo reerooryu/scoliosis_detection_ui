@@ -1,6 +1,8 @@
 # Runs the tests on every push and pull request. Only Python, pytest, numpy,
 # pydicom and requests are needed: the tests cover the math, post-processing,
-# DICOM conversion, project files and update check, not the model or the UI.
+# DICOM conversion, project files and updates, not the model or the UI.
+# Windows and Mac are included for the self-update swap (tests/test_updater.py),
+# which works differently on each.
 name: Tests
 
 on:
@@ -9,10 +11,15 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.10", "3.12"]
+        include:
+          - { os: ubuntu-latest, python-version: "3.10" }
+          - { os: ubuntu-latest, python-version: "3.12" }
+          - { os: windows-latest, python-version: "3.12" }
+          - { os: macos-14, python-version: "3.12" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
