@@ -43,6 +43,25 @@ class InferenceSettings:
     weights_path: str  # local mode; "" if no model file is chosen or found
 
 
+def path_field(placeholder=""):
+    """A one-line, read-only box for a file or folder path (changed with a
+    Browse button). A long path scrolls inside the box instead of being cut
+    off; the full path is also shown when the mouse rests on it."""
+    field = QLineEdit()
+    field.setReadOnly(True)
+    field.setPlaceholderText(placeholder)
+    field.setMinimumWidth(300)
+    return field
+
+
+def set_path(field, path):
+    """Show path in a path_field(). The end of a long path (the file or
+    folder name) is the part left in view."""
+    field.setText(path)
+    field.setToolTip(path)
+    field.setCursorPosition(len(path))
+
+
 def choose_model_file(parent, start_path=""):
     """Ask for the model file. Returns its path, or "" if cancelled."""
     path, _ = QFileDialog.getOpenFileName(
@@ -55,7 +74,7 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(560)
 
         self._settings = QSettings(ORG_NAME, APP_KEY)
         self._curve_colors = [QColor(color) for color in self.get_saved_curve_colors()]
@@ -86,11 +105,11 @@ class SettingsDialog(QDialog):
         form.addRow("Curve colors:", color_row)
 
         folder_row = QHBoxLayout()
-        self._folder_lbl = QLabel(self._export_folder)
-        self._folder_lbl.setWordWrap(True)
+        self._folder_field = path_field()
+        set_path(self._folder_field, self._export_folder)
         folder_btn = QPushButton("Browse…")
         folder_btn.clicked.connect(self._pick_folder)
-        folder_row.addWidget(self._folder_lbl, stretch=1)
+        folder_row.addWidget(self._folder_field, stretch=1)
         folder_row.addWidget(folder_btn)
         form.addRow("Default export folder:", folder_row)
 
@@ -119,12 +138,11 @@ class SettingsDialog(QDialog):
         self._mode_group.addButton(self._local_radio)
         self._mode_group.addButton(self._server_radio)
 
-        self._weights_lbl = QLabel()
-        self._weights_lbl.setWordWrap(True)
+        self._weights_field = path_field("No model file chosen")
         self._weights_btn = QPushButton("Browse…")
         self._weights_btn.clicked.connect(self._pick_weights)
         weights_row = QHBoxLayout()
-        weights_row.addWidget(self._weights_lbl, stretch=1)
+        weights_row.addWidget(self._weights_field, stretch=1)
         weights_row.addWidget(self._weights_btn)
 
         self._api_url_edit = QLineEdit(inference.api_url)
@@ -150,8 +168,8 @@ class SettingsDialog(QDialog):
 
     def _update_model_box(self):
         local = self._local_radio.isChecked()
-        self._weights_lbl.setText(self._weights_path or "No model file chosen")
-        self._weights_lbl.setEnabled(local)
+        set_path(self._weights_field, self._weights_path)
+        self._weights_field.setEnabled(local)
         self._weights_btn.setEnabled(local)
         self._api_url_edit.setEnabled(not local)
 
@@ -187,7 +205,7 @@ class SettingsDialog(QDialog):
         folder = QFileDialog.getExistingDirectory(self, "Default Export Folder", self._export_folder)
         if folder:
             self._export_folder = folder
-            self._folder_lbl.setText(folder)
+            set_path(self._folder_field, folder)
 
     def _on_save(self):
         if not FORCED_INFERENCE_MODE:
