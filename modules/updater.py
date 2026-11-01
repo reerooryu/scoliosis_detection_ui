@@ -4,7 +4,9 @@
 #   2. prepare_update() downloads the zip for this computer in the background,
 #      checks its size and checksum, and unpacks it into a staging folder next
 #      to the app (".ScoliosisAI-update"). "ready.json" is written last, so a
-#      half-finished download is never installed.
+#      half-finished download is never installed. A download cut off (app
+#      closed, connection lost) continues where it stopped next time; the
+#      checksum over the whole file proves the joined pieces are correct.
 #   3. install_pending_update() swaps the new version in, at the next start or
 #      after "Update Now" closes the window:
 #        Windows: a running program can't replace its own folder, so a small
@@ -53,6 +55,11 @@ class UpdateError(Exception):
     """A download or install step failed. The app keeps its current version."""
 
 
+class DownloadPaused(UpdateError):
+    """The download stopped part-way (no connection, cut off). What was
+    downloaded is kept and the download continues at the next start."""
+
+
 @dataclass(frozen=True)
 class Install:
     """Where the running app is."""
@@ -97,11 +104,13 @@ def _has_program(app, platform):
 # Step 2: download and unpack (background thread)
 # ---------------------------------------------------------------------------
 
-def prepare_update(info, install, cancel=None):
+def prepare_update(info, install, cancel=None, progress=None):
     """Download and unpack info's release file (an updates.UpdateInfo) next
     to the app. Returns the staged app's path. A version that is already
-    staged is reused, not downloaded again. cancel is an optional
-    threading.Event. Raises UpdateError."""
+    staged is reused, and a partial download of the same release is
+    continued. cancel is an optional threading.Event; progress(done_bytes,
+    total_bytes) is called as the download goes. Raises DownloadPaused if
+    the download stopped part-way, UpdateError for anything else."""
     if info.asset is None:
         raise UpdateError("The release has no file for this computer.")
     app = staged_app(install, info.version)
@@ -109,15 +118,19 @@ def prepare_update(info, install, cancel=None):
     if ready and ready.get("version") == info.version and _has_program(app, install.platform):
         return app
 
-    _remove(install.staging_dir)
+    part = _part_path(info)
     try:
-        install.staging_dir.mkdir(parents=True)
+        install.staging_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise UpdateError(f"Could not create {install.staging_dir}: {exc}") from exc
     _hide(install.staging_dir)
+    # Keep only a partial download of this same release.
+    for child in install.staging_dir.iterdir():
+        if child.name != part:
+            _remove(child)
 
     zip_path = install.staging_dir / info.asset.name
-    _download(info.asset, zip_path, cancel)
+    _download(info.asset, install.staging_dir / part, zip_path, cancel, progress)
     _unpack(zip_path, install.staging_dir / info.version, install.platform)
     zip_path.unlink()
     if not _has_program(app, install.platform):
@@ -127,34 +140,75 @@ def prepare_update(info, install, cancel=None):
     return app
 
 
-def _download(asset, path, cancel):
-    """Save asset (an updates.UpdateAsset) to path, checking its size and,
-    if GitHub gave one, its SHA-256 checksum."""
-    part = path.with_name(path.name + ".part")
+def _part_path(info):
+    """File name of the partial download of info's release file. It holds
+    the version, so a download is only ever continued for the same release."""
+    return f"{info.version}-{info.asset.name}.part"
+
+
+def _download(asset, part, dest, cancel, progress):
+    """Download asset (an updates.UpdateAsset) into part, continuing what is
+    already there, then check it and rename it to dest.
+
+    A download that stops part-way is kept (DownloadPaused), to be continued
+    next time. A file that fails the size or checksum check is deleted, so
+    the next try starts from the beginning. Continuing is only done when
+    GitHub gave a checksum: that checksum, over the whole file, is what
+    proves the joined pieces are correct. Without one, it starts afresh."""
+    offset = part.stat().st_size if part.exists() else 0
+    if offset > asset.size or not asset.sha256:
+        _remove(part)
+        offset = 0
     digest = hashlib.sha256()
-    size = 0
     try:
-        with requests.get(asset.url, stream=True, timeout=DOWNLOAD_TIMEOUT) as response:
-            response.raise_for_status()
-            with open(part, "wb") as out:
-                for chunk in response.iter_content(CHUNK_SIZE):
-                    if cancel is not None and cancel.is_set():
-                        raise UpdateError("Download cancelled.")
-                    out.write(chunk)
+        if offset:
+            with open(part, "rb") as existing:
+                for chunk in iter(lambda: existing.read(CHUNK_SIZE), b""):
                     digest.update(chunk)
-                    size += len(chunk)
-        if size != asset.size:
-            raise UpdateError(f"Download incomplete: {size} of {asset.size} bytes.")
-        if asset.sha256 and digest.hexdigest() != asset.sha256:
-            raise UpdateError("The downloaded file is damaged (checksum does not match).")
-        os.replace(part, path)
+        if offset < asset.size:
+            offset, digest = _fetch(asset, part, offset, digest, cancel, progress)
     except requests.RequestException as exc:
-        raise UpdateError(f"Download failed: {exc}") from exc
+        raise DownloadPaused(f"Download stopped; it continues next time: {exc}") from exc
     except OSError as exc:
         raise UpdateError(f"Could not save the download: {exc}") from exc
-    finally:
-        if part.exists():
-            part.unlink()
+
+    size = part.stat().st_size
+    if size < asset.size:
+        raise DownloadPaused(f"Download stopped at {size} of {asset.size} bytes; it continues next time.")
+    if size > asset.size or (asset.sha256 and digest.hexdigest() != asset.sha256):
+        _remove(part)
+        raise UpdateError("The downloaded file is damaged; it will be downloaded again.")
+    os.replace(part, dest)
+
+
+def _fetch(asset, part, offset, digest, cancel, progress):
+    """Append the rest of asset, from byte offset, to part. Returns the new
+    (offset, digest): both start again if the server sends the whole file
+    instead of the rest."""
+    headers = {"Range": f"bytes={offset}-"} if offset else {}
+    with requests.get(asset.url, stream=True, timeout=DOWNLOAD_TIMEOUT, headers=headers) as response:
+        response.raise_for_status()
+        if offset:
+            content_range = response.headers.get("Content-Range", "")
+            if response.status_code == 206 and content_range.startswith(f"bytes {offset}-"):
+                logger.info("Continuing the update download at %d of %d bytes", offset, asset.size)
+            else:
+                logger.info("The server sent the whole file; starting the download again")
+                offset, digest = 0, hashlib.sha256()
+        else:
+            logger.info("Downloading %s (%.0f MB)", asset.name, asset.size / 1e6)
+        with open(part, "ab" if offset else "wb") as out:
+            if progress is not None:
+                progress(offset, asset.size)
+            for chunk in response.iter_content(CHUNK_SIZE):
+                if cancel is not None and cancel.is_set():
+                    raise DownloadPaused("Download cancelled; it continues next time.")
+                out.write(chunk)
+                digest.update(chunk)
+                offset += len(chunk)
+                if progress is not None:
+                    progress(offset, asset.size)
+    return offset, digest
 
 
 def _unpack(zip_path, dest, platform):
@@ -194,14 +248,14 @@ def apply_pending_update(install, current=APP_VERSION, pid=None, launch=True):
     new version on a Mac (for tests)."""
     ready = _read_ready(install.staging_dir)
     if ready is None or not is_newer(ready["version"], current):
-        cleanup(install)
+        cleanup(install, current)
         return False
 
     app = staged_app(install, ready["version"])
     attempts = ready.get("attempts", 0) if isinstance(ready.get("attempts"), int) else MAX_ATTEMPTS
     if attempts >= MAX_ATTEMPTS or not _has_program(app, install.platform):
         logger.warning("Dropping staged update %s (attempts: %s)", ready["version"], attempts)
-        cleanup(install)
+        cleanup(install, current, keep_partial=False)
         return False
 
     ready["attempts"] = attempts + 1
@@ -216,10 +270,21 @@ def apply_pending_update(install, current=APP_VERSION, pid=None, launch=True):
     return True
 
 
-def cleanup(install):
-    """Remove the staging folder and the old version left by a swap."""
-    _remove(install.staging_dir)
+def cleanup(install, current=APP_VERSION, keep_partial=True):
+    """Remove the old version left by a swap and the staging folder. A
+    partial download of a release newer than current is kept, to be
+    continued (unless keep_partial is False)."""
     _remove(_old_app_path(install))
+    if not install.staging_dir.is_dir():
+        return
+    for child in install.staging_dir.iterdir():
+        version = child.name.split("-", 1)[0]
+        if not (keep_partial and child.name.endswith(".part") and is_newer(version, current)):
+            _remove(child)
+    try:
+        install.staging_dir.rmdir()   # only if nothing was kept
+    except OSError:
+        pass
 
 
 def _old_app_path(install):

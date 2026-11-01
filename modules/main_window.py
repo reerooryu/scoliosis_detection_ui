@@ -170,6 +170,8 @@ class MainWindow(QMainWindow):
     # Sent from the update-check thread; Qt delivers it on the GUI thread.
     update_available = Signal(object)  # updates.UpdateInfo: offer the download page
     update_ready = Signal(object)      # updates.UpdateInfo: downloaded, ready to install
+    update_progress = Signal(str, int) # (version, percent downloaded)
+    update_paused = Signal(str)        # version: download stopped, continues next start
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -195,6 +197,19 @@ class MainWindow(QMainWindow):
         self.busy_bar.setFixedSize(140, 12)
         self.busy_bar.hide()
         self.statusBar().addPermanentWidget(self.busy_bar)
+
+        # Far right of the status bar: update download progress (only while
+        # there is something to say) and the app version.
+        self.update_label = QLabel()
+        self.update_label.setObjectName("MetricLabel")
+        self.update_label.setContentsMargins(0, 0, 14, 0)
+        self.update_label.hide()
+        self.statusBar().addPermanentWidget(self.update_label)
+        version_label = QLabel(f"v{APP_VERSION}")
+        version_label.setObjectName("MetricLabel")
+        version_label.setToolTip("App version. Help → About has more details.")
+        version_label.setContentsMargins(0, 0, 6, 0)
+        self.statusBar().addPermanentWidget(version_label)
 
         # Custom clinical theme is applied only to these specific content
         # widgets -- the menu bar and every dialog stay native OS style.
@@ -263,6 +278,8 @@ class MainWindow(QMainWindow):
         internet just means no message."""
         self.update_available.connect(self._on_update_available)
         self.update_ready.connect(self._on_update_ready)
+        self.update_progress.connect(self._on_update_progress)
+        self.update_paused.connect(self._on_update_paused)
         install = updater.current_install()
 
         def check():
@@ -270,8 +287,20 @@ class MainWindow(QMainWindow):
             if info is None:
                 return
             if install is not None and info.asset is not None:
+                last_percent = [-1]
+
+                def progress(done, total):
+                    percent = int(done * 100 / total) if total else 0
+                    if percent != last_percent[0]:     # at most 100 signals
+                        last_percent[0] = percent
+                        self.update_progress.emit(info.version, percent)
+
                 try:
-                    updater.prepare_update(info, install)
+                    updater.prepare_update(info, install, progress=progress)
+                except updater.DownloadPaused as exc:
+                    logger.info("Update %s: %s", info.version, exc)
+                    self.update_paused.emit(info.version)
+                    return
                 except Exception as exc:
                     logger.warning("Preparing update %s failed: %s", info.version, exc)
                 else:
@@ -284,6 +313,7 @@ class MainWindow(QMainWindow):
     def _on_update_ready(self, info):
         """The new version is downloaded. Ask now or later, but not while an
         analysis is running: then ask when it finishes."""
+        self._show_update_status(f"Update v{info.version} ready")
         if self.controller.is_busy():
             self._waiting_update = info
             return
@@ -298,6 +328,19 @@ class MainWindow(QMainWindow):
             self.close()                 # asks about unsaved work first
             if self.isVisible():         # the user chose to keep working
                 self.restart_for_update = False
+        if not self.restart_for_update:
+            self._show_update_status(f"Update v{info.version} installs next time you open the app")
+
+    def _on_update_progress(self, version, percent):
+        self._show_update_status(f"Downloading update v{version}… {percent}%")
+
+    def _on_update_paused(self, version):
+        self._show_update_status(f"Update v{version} download paused; it continues next time")
+
+    def _show_update_status(self, text):
+        """Show text in the status bar's update area ("" hides it)."""
+        self.update_label.setText(text)
+        self.update_label.setVisible(bool(text))
 
     def _on_busy_changed(self, busy):
         if not busy and self._waiting_update is not None:
@@ -312,12 +355,18 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, "About",
             f"{APP_NAME}\nVersion {APP_VERSION}\n\nAI model runs on: {where}\n\n"
-            f"Log file (send it with any problem report):\n{LOG_PATH}\n\n"
+            f"Log file (send it with any problem report; Help → Open Log Folder):\n{LOG_PATH}\n\n"
             "For research and testing only. Not for clinical decisions.",
         )
 
+    def _on_open_log_folder(self):
+        """Open the folder with the log file in Finder / File Explorer, so it
+        can be sent with a problem report."""
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_PATH.parent)))
+
     def _on_update_available(self, info):
         """Fallback when the app can't update itself: offer the download page."""
+        self._show_update_status("")
         if self._ask_update(
             "Update Available",
             f"A new version of the app is available: {info.version} (you have {APP_VERSION}).",
@@ -451,7 +500,10 @@ class MainWindow(QMainWindow):
 
         about_action = self._action("&About", self._on_about)
         about_action.setMenuRole(QAction.AboutRole)  # goes in the app menu on a Mac
-        self._add_menu("&Help", [about_action])
+        self._add_menu("&Help", [
+            about_action,
+            self._action("Open &Log Folder", self._on_open_log_folder),
+        ])
 
         # --- Toolbar: zoom / edit / undo-redo / reset-edits / settings, far right ---
         self.toolbar = QToolBar("Main Toolbar", self)

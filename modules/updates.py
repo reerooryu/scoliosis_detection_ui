@@ -5,6 +5,7 @@
 # Releases are tagged "v" + version, e.g. "v0.2.0" (see README, "Make a
 # release"). Draft and pre-release builds are not offered.
 
+import logging
 import re
 import sys
 from dataclasses import dataclass
@@ -13,6 +14,8 @@ from typing import Optional
 import requests
 
 from config import APP_VERSION, GITHUB_REPO
+
+logger = logging.getLogger(__name__)
 
 LATEST_RELEASE_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 CHECK_TIMEOUT = 5  # seconds; the check must never hold anything up
@@ -97,7 +100,14 @@ def check_for_update(current=APP_VERSION, timeout=CHECK_TIMEOUT):
             headers={"Accept": "application/vnd.github+json"},
         )
         if response.status_code != 200:
+            logger.info("Update check: GitHub answered HTTP %s", response.status_code)
             return None
-        return update_from_release(response.json(), current)
-    except (requests.RequestException, ValueError):
+        info = update_from_release(response.json(), current)
+    except (requests.RequestException, ValueError) as exc:
+        logger.info("Update check failed (no internet?): %s", exc)
         return None
+    if info is None:
+        logger.info("Update check: %s is the latest version", current)
+    else:
+        logger.info("Update check: version %s is available (this is %s)", info.version, current)
+    return info
