@@ -226,11 +226,11 @@ graph TD
     Controller --> Session["session.py - state for one image"]
     Controller --> Overlay["overlay.py - landmarks, Cobb lines, CSVL"]
     Controller --> Project["project.py - .sdproj save and open"]
-    Controller --> Parser["parser.py - gets the AI result"]
-    Session --> Engine["model_mock.py - ScoliosisModelEngine"]
+    Controller --> Analysis["analysis.py - gets the AI result"]
+    Session --> Engine["engine.py - ScoliosisModelEngine"]
     Engine --> Geometry["geometry.py - angle math"]
-    Parser -->|Local| Inference["inference.py - the AI model"]
-    Parser -->|Server: POST image| Server["server.py - FastAPI inference server"]
+    Analysis -->|Local| Inference["inference.py - the AI model"]
+    Analysis -->|Server: POST image| Server["server.py - FastAPI inference server"]
     Server --> Inference
     Inference --> Post["postprocess.py - model output to result"]
     Post --> Geometry
@@ -248,10 +248,11 @@ graph TD
 | `modules/session.py` | State for the loaded image. |
 | `modules/load_view.py` | Load page. |
 | `modules/canvas.py` | Image viewer (pan, zoom, fit). |
-| `modules/overlay.py` | Landmarks, Cobb lines and labels, CSVL. |
-| `modules/model_mock.py` | `ScoliosisModelEngine`: holds the result, recalculates angles, undo/redo. |
+| `modules/overlay.py` | Landmarks, Cobb lines and labels, CSVL, level tags. |
+| `modules/drawing.py` | Drawing rules shared by the viewer and the exported JPG (apex colors, Cobb lines). |
+| `modules/engine.py` | `ScoliosisModelEngine`: holds the result, recalculates angles, levels and apexes, undo/redo. |
 | `modules/geometry.py` | Angle, curve, CSVL and apex math. Used by the app and the server. |
-| `modules/parser.py` | Gets the AI result (local model or server) and checks it. |
+| `modules/analysis.py` | Gets the AI result (local model or server) and checks it. |
 | `modules/updates.py` | Asks GitHub for a newer release. |
 | `modules/updater.py` | Downloads, checks and installs an update (Windows and Mac). |
 | `modules/app_paths.py` | Finds the model file and the log file. |
@@ -260,7 +261,8 @@ graph TD
 | `modules/project.py` | Reads and writes `.sdproj` files. |
 | `modules/export.py` | Export dialog. |
 | `modules/report_image.py` | Draws the exported JPG: X-ray, overlay and results panel. |
-| `modules/settings_dialog.py` | Settings dialog. |
+| `modules/settings.py` | Reads and saves the settings. |
+| `modules/settings_dialog.py` | Settings window. |
 | `modules/validation.py` | Model Validation dialog. |
 | `modules/theme.py` | Dark theme for the toolbar and workspace. |
 | `tests/` | Tests for the math, the server's post-processing, DICOM conversion, project save and open, and updates. GitHub runs them on Linux, Windows and Mac. |
