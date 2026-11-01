@@ -1,7 +1,7 @@
 # Tests for ScoliosisModelEngine's level names and curve apexes, which the
 # app panel, the viewer labels and the exported JPG all use.
 
-from modules.model_mock import ScoliosisModelEngine
+from modules.engine import ScoliosisModelEngine
 
 from synthetic_spine import EXPECTED_CURVES, MARKER_INDEX, make_result
 

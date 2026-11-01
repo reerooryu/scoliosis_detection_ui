@@ -1,11 +1,9 @@
-# Settings dialog: where the AI model runs (this computer or a server),
-# curve colors and default export folder. Saved with QSettings, so they
-# survive restarts.
+# Settings window: where the AI model runs (this computer or a server),
+# curve colors and default export folder. Reading and saving the values is
+# done by modules/settings.py.
 
 import os
-from dataclasses import dataclass
 
-from PySide6.QtCore import QSettings
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QPushButton,
@@ -14,33 +12,19 @@ from PySide6.QtWidgets import (
     # QComboBox,  # only needed for the language switch below -- re-add on import if re-enabling
 )
 
-from config import (
-    CURVE_COLORS, DEFAULT_INFERENCE_MODE, FORCED_API_URL, FORCED_INFERENCE_MODE, INFERENCE_API_URL,
-)
-from modules.app_paths import find_model_file
-
-ORG_NAME = "ScoliosisSuite"
-APP_KEY = "DetectionUI"
+from config import CURVE_COLORS, FORCED_API_URL, FORCED_INFERENCE_MODE
+from modules import settings
+from modules.settings import MODE_LOCAL, MODE_SERVER
 
 # --- Language switch (disabled until Thai translations exist) --------------
 # To re-enable: uncomment this block, the QComboBox import above, the
-# "Language:" row in __init__, the language line in _on_save, and
-# get_saved_language() below.
+# "Language:" row in __init__ and the language line in _on_save, and read it
+# back from QSettings key "language" in modules/settings.py.
 # LANGUAGES = ["English", "Thai"]
 # DEFAULT_LANGUAGE = "English"
 # ---------------------------------------------------------------------------
 
-MODE_LOCAL = "local"
-MODE_SERVER = "server"
 MODEL_FILE_FILTER = "AI model file (*.pth);;All files (*)"
-
-
-@dataclass(frozen=True)
-class InferenceSettings:
-    """Where the AI model runs, as currently saved (or forced by config)."""
-    mode: str          # MODE_LOCAL or MODE_SERVER
-    api_url: str       # server mode
-    weights_path: str  # local mode; "" if no model file is chosen or found
 
 
 def path_field(placeholder=""):
@@ -76,10 +60,9 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Settings")
         self.setMinimumWidth(560)
 
-        self._settings = QSettings(ORG_NAME, APP_KEY)
-        self._curve_colors = [QColor(color) for color in self.get_saved_curve_colors()]
-        self._export_folder = self._settings.value("export_folder", os.path.expanduser("~"))
-        inference = self.get_inference_settings()
+        self._curve_colors = [QColor(color) for color in settings.curve_colors()]
+        self._export_folder = settings.export_folder()
+        inference = settings.inference_settings()
         self._weights_path = inference.weights_path
 
         model_box = self._build_model_box(inference)
@@ -208,65 +191,12 @@ class SettingsDialog(QDialog):
             set_path(self._folder_field, folder)
 
     def _on_save(self):
-        if not FORCED_INFERENCE_MODE:
-            mode = MODE_LOCAL if self._local_radio.isChecked() else MODE_SERVER
-            self._settings.setValue("inference_mode", mode)
-        if not FORCED_API_URL:
-            # A blank URL falls back to the default, so requests do not all fail.
-            api_url = self._api_url_edit.text().strip() or INFERENCE_API_URL
-            self._settings.setValue("inference_api_url", api_url)
-        if self._weights_path:
-            self._settings.setValue("weights_path", self._weights_path)
-        for index, color in enumerate(self._curve_colors):
-            self._settings.setValue("curve_color_{}".format(index + 1), color.name())
-        self._settings.setValue("export_folder", self._export_folder)
-        # self._settings.setValue("language", self._language_combo.currentText())
+        settings.save_inference_settings(
+            MODE_LOCAL if self._local_radio.isChecked() else MODE_SERVER,
+            self._api_url_edit.text(),
+            self._weights_path,
+        )
+        settings.save_curve_colors([color.name() for color in self._curve_colors])
+        settings.save_export_folder(self._export_folder)
+        # QSettings(...).setValue("language", self._language_combo.currentText())
         self.accept()
-
-    @staticmethod
-    def get_inference_settings():
-        """Where the AI model runs, read without building the dialog.
-        FORCED_* values in config.py win over what the user saved."""
-        settings = QSettings(ORG_NAME, APP_KEY)
-        mode = FORCED_INFERENCE_MODE or settings.value("inference_mode", DEFAULT_INFERENCE_MODE)
-        if mode not in (MODE_LOCAL, MODE_SERVER):
-            mode = DEFAULT_INFERENCE_MODE
-        api_url = FORCED_API_URL or settings.value("inference_api_url", INFERENCE_API_URL)
-        # A saved file that has since been moved or deleted is ignored, so a
-        # model file placed next to the app can still be found.
-        weights_path = settings.value("weights_path", "")
-        if not weights_path or not os.path.isfile(weights_path):
-            weights_path = find_model_file() or ""
-        return InferenceSettings(mode=mode, api_url=api_url, weights_path=weights_path)
-
-    @staticmethod
-    def save_weights_path(path):
-        """Remember the model file chosen outside the dialog (first run)."""
-        QSettings(ORG_NAME, APP_KEY).setValue("weights_path", path)
-
-    @staticmethod
-    def get_saved_curve_colors():
-        """The saved color of each curve as hex strings, top curve first.
-        Anything missing or invalid falls back to the default."""
-        settings = QSettings(ORG_NAME, APP_KEY)
-        colors = []
-        for index, default in enumerate(CURVE_COLORS):
-            saved = settings.value("curve_color_{}".format(index + 1))
-            if saved is None and index == 0:
-                # Older versions had one line color; keep it for curve 1.
-                saved = settings.value("line_color")
-            color = QColor(saved) if saved else QColor()
-            colors.append(color.name() if color.isValid() else default)
-        return colors
-
-    @staticmethod
-    def get_saved_export_folder():
-        settings = QSettings(ORG_NAME, APP_KEY)
-        return settings.value("export_folder", os.path.expanduser("~"))
-
-    # @staticmethod
-    # def get_saved_language():
-    #     """Reads the persisted UI language without constructing the dialog
-    #     UI. Defaults to English (the only implemented option so far)."""
-    #     settings = QSettings(ORG_NAME, APP_KEY)
-    #     return settings.value("language", DEFAULT_LANGUAGE)

@@ -79,7 +79,7 @@ def self_test(report_path, model_path=None, image_path=None):
         import numpy as np
         import torch
         from modules import inference
-        from modules.parser import validate_inference_payload
+        from modules.analysis import validate_inference_payload
 
         started = time.monotonic()
         predictor = inference.create_untrained_predictor()
@@ -100,7 +100,7 @@ def self_test(report_path, model_path=None, image_path=None):
         import json
         import time
         from modules import inference
-        from modules.parser import validate_inference_payload
+        from modules.analysis import validate_inference_payload
 
         started = time.monotonic()
         predictor = inference.load_predictor(model_path)

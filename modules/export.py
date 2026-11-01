@@ -1,6 +1,7 @@
 # Export dialog: raw JSON and an annotated JPG (the X-ray with the overlay and
 # a results panel). PDF Report and CSV are shown disabled as "coming soon".
 
+import json
 import os
 import re
 from datetime import datetime
@@ -10,9 +11,22 @@ from PySide6.QtWidgets import (
     QPushButton, QFileDialog, QMessageBox, QDialogButtonBox
 )
 
-from modules.utils import export_json_data
+from modules import settings
 from modules.report_image import render_annotated_image
-from modules.settings_dialog import SettingsDialog
+
+
+def export_json_data(data, export_path):
+    """Write data to export_path as JSON, creating the folder if needed.
+    Returns (ok, message)."""
+    try:
+        parent_dir = os.path.dirname(export_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+        with open(export_path, "w") as f:
+            json.dump(data, f, indent=3)
+        return True, "Export successful!"
+    except Exception as e:
+        return False, f"Failed to export: {str(e)}"
 
 
 class ExportDialog(QDialog):
@@ -58,7 +72,7 @@ class ExportDialog(QDialog):
 
         layout.addWidget(QLabel("Export to folder:"))
         folder_row = QHBoxLayout()
-        self.folder_edit = QLineEdit(SettingsDialog.get_saved_export_folder())
+        self.folder_edit = QLineEdit(settings.export_folder())
         browse_btn = QPushButton("Browse…")
         browse_btn.clicked.connect(self._pick_folder)
         folder_row.addWidget(self.folder_edit, stretch=1)

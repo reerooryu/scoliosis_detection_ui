@@ -17,7 +17,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 from config import INFERENCE_API_URL, INFERENCE_TIMEOUT
 from modules.app_paths import LOG_PATH
 from modules.image_io import ImageLoadError, encoded_image
-from modules.settings_dialog import MODE_LOCAL
+from modules.settings import MODE_LOCAL
 
 
 logger = logging.getLogger(__name__)
@@ -218,7 +218,7 @@ def run_local_inference(image_path, weights_path, on_loading=None):
 class InferenceWorker(QObject):
     """Runs one blocking inference request on a QThread that the caller
     creates and owns. settings is an InferenceSettings (modules/
-    settings_dialog.py). A running request cannot be aborted, so cancel()
+    settings.py). A running request cannot be aborted, so cancel()
     only stops its result from being delivered."""
 
     succeeded = Signal(int, dict, float)  # (request_id, result, elapsed_seconds)

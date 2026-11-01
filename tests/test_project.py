@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from modules.model_mock import ScoliosisModelEngine
+from modules.engine import ScoliosisModelEngine
 from modules.project import PROJECT_EXTENSION, ProjectLoadError, read_project, write_project
 
 from synthetic_spine import make_result

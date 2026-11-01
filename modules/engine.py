@@ -1,7 +1,9 @@
-# ScoliosisModelEngine: holds one analysis result and recalculates its angles.
-# The file name is historical: this handles real server results, not a mock.
+# ScoliosisModelEngine: holds one analysis result (from the local model, the
+# server or a saved project) and recalculates everything derived from it.
 
 import copy
+from dataclasses import dataclass
+from typing import Optional
 
 from config import KP_TOP_LEFT, KP_TOP_RIGHT, KP_BOTTOM_LEFT, KP_BOTTOM_RIGHT
 from modules.geometry import (
@@ -18,6 +20,17 @@ UNDO_HISTORY_LIMIT = 50
 # without the one-time model load.
 PROCESSING_TIME_KEY = "processing_time_seconds"
 INFERENCE_MODE_KEY = "inference_mode"
+
+
+@dataclass(frozen=True)
+class CurveSummary:
+    """One curve as shown in the panel and the exported JPG."""
+    angle: float
+    upper_level: str             # e.g. "T6"
+    lower_level: str             # e.g. "L1"
+    apex_level: Optional[str]    # None if the curve has no apex
+    is_main_apex: bool           # its apex is the whole-spine apex
+
 
 class ScoliosisModelEngine:
     def __init__(self):
@@ -74,12 +87,13 @@ class ScoliosisModelEngine:
         return self.data.get("angle_pairs", [])
 
     def get_selected_cobb_angle(self):
-        """Returns the current main/selected Cobb angle."""
-        return self.data.get("selected_cobb_angle", 0.0)
+        """The largest Cobb angle, or None if there is no curve."""
+        return self.data.get("selected_cobb_angle")
 
     def get_input_shape(self):
-        """Returns original image input dimensions [height, width]."""
-        return self.data.get("input_shape", [1832, 1190])
+        """The image size the coordinates are in, [height, width]. Every
+        result has it (validate_inference_payload checks)."""
+        return self.data["input_shape"]
 
     def set_processing_time(self, seconds, mode=None):
         """Record the analysis time in seconds and where the model ran."""
@@ -96,6 +110,14 @@ class ScoliosisModelEngine:
         """The analysis time in seconds, or None (e.g. older projects)."""
         value = self.data.get(PROCESSING_TIME_KEY) if self.data else None
         return float(value) if isinstance(value, (int, float)) else None
+
+    def processing_time_text(self):
+        """e.g. "1.62 s (local)", or None if the result has no time."""
+        seconds = self.get_processing_time()
+        if seconds is None:
+            return None
+        mode = self.get_inference_mode()
+        return "{:.2f} s".format(seconds) + (" ({})".format(mode) if mode else "")
 
     def get_raw_data(self):
         """Returns the raw dictionary data."""
@@ -124,6 +146,33 @@ class ScoliosisModelEngine:
             curve_apex(detections, pair.get("upper_detection_index", -1),
                        pair.get("lower_detection_index", -1), main_apex)[0]
             for pair in self.get_angle_pairs()
+        ]
+
+    def get_apex_roles(self):
+        """{vertebra index: (curve index or None, is_main_apex)} for every
+        apex vertebra: each curve's apex, and the whole-spine apex (curve
+        index None if it lies in no curve)."""
+        main_apex, _ = self.get_apex()
+        roles = {}
+        for curve_index, apex in enumerate(self.get_curve_apexes()):
+            if apex is not None:
+                roles[apex] = (curve_index, apex == main_apex)
+        if main_apex is not None and main_apex not in roles:
+            roles[main_apex] = (None, True)
+        return roles
+
+    def curve_summaries(self):
+        """A CurveSummary per curve, top curve first."""
+        main_apex, _ = self.get_apex()
+        return [
+            CurveSummary(
+                angle=pair.get("cobb_angle", 0.0),
+                upper_level=self.get_level(pair["upper_detection_index"]),
+                lower_level=self.get_level(pair["lower_detection_index"]),
+                apex_level=self.get_level(apex) if apex is not None else None,
+                is_main_apex=apex is not None and apex == main_apex,
+            )
+            for pair, apex in zip(self.get_angle_pairs(), self.get_curve_apexes())
         ]
 
     def update_keypoint(self, detection_index, keypoint_index, x, y):
@@ -298,10 +347,8 @@ class ScoliosisModelEngine:
                 all_angles.append(cobb)
 
         self.data["all_angles"] = all_angles
-        if all_angles:
-            self.data["selected_cobb_angle"] = max(all_angles)
-        else:
-            self.data["selected_cobb_angle"] = 0.0
+        # None with no curve, the same as a fresh result from the model.
+        self.data["selected_cobb_angle"] = max(all_angles) if all_angles else None
 
         # Update top level detection count
         self.data["detection_count"] = len(detections)

@@ -13,6 +13,7 @@ from config import (
     COLOR_CSVL_LINE, COLOR_VERTEBRA_OUTLINE, CURVE_COLORS,
     KP_BOTTOM_LEFT, KP_BOTTOM_RIGHT, KP_CENTER, KP_TOP_LEFT, KP_TOP_RIGHT,
 )
+from modules.drawing import apex_tag_style, curve_color, extended_line
 
 # Sizes are for a 1000 px tall image; everything scales with the image height.
 PANEL_BG = QColor("#0d0f12")
@@ -64,17 +65,6 @@ def _point(keypoint):
 # Overlay on the X-ray (kept light so the X-ray stays readable)
 # ---------------------------------------------------------------------------
 
-def _extended_line(p1, p2, extend):
-    """The p1-p2 line, extended past both ends (like the viewer's Cobb lines)."""
-    dx, dy = p2.x() - p1.x(), p2.y() - p1.y()
-    length = math.hypot(dx, dy)
-    if length == 0:
-        return None
-    ux, uy = dx / length, dy / length
-    return (QPointF(p1.x() - ux * extend, p1.y() - uy * extend),
-            QPointF(p2.x() + ux * extend * 1.4, p2.y() + uy * extend * 1.4))
-
-
 def _draw_overlay(painter, engine, colors, img_w, img_h, s):
     detections = engine.get_detections()
 
@@ -110,10 +100,11 @@ def _draw_overlay(painter, engine, colors, img_w, img_h, s):
             continue
         u_kp = detections[u_idx]["keypoints"]
         l_kp = detections[l_idx]["keypoints"]
-        color = QColor(colors[idx % len(colors)])
+        color = QColor(curve_color(colors, idx))
         painter.setPen(QPen(color, 2.0 * s))
+        extend = 0.13 * img_h
         for p1, p2 in ((u_kp[KP_TOP_LEFT], u_kp[KP_TOP_RIGHT]), (l_kp[KP_BOTTOM_LEFT], l_kp[KP_BOTTOM_RIGHT])):
-            line = _extended_line(_point(p1), _point(p2), 0.13 * img_h)
+            line = extended_line(_point(p1), _point(p2), before=extend, after=extend * 1.4)
             if line is not None:
                 painter.drawLine(*line)
 
@@ -124,26 +115,17 @@ def _draw_overlay(painter, engine, colors, img_w, img_h, s):
 
     # Level names. Each curve's apex is filled with the curve's color; the
     # whole-spine apex (furthest from the CSVL) is also drawn larger.
-    main_apex, _ = engine.get_apex()
-    apex_colors = {
-        apex_idx: QColor(colors[idx % len(colors)])
-        for idx, apex_idx in enumerate(engine.get_curve_apexes())
-        if apex_idx is not None
-    }
-
+    roles = engine.get_apex_roles()
     number_font = _font(9 * s, bold=True)
     main_apex_font = _font(11.5 * s, bold=True)
     for index, (text, right_x, center_y) in number_tags:
-        font = main_apex_font if index == main_apex else number_font
-        if index in apex_colors:
-            fill = QColor(apex_colors[index])
-            fill.setAlpha(235)
-            ink = QColor("#111111") if fill.lightness() > 140 else QColor("white")
-            _draw_number_tag(painter, text, right_x, center_y, font, s, fill, ink)
-        elif index == main_apex:
-            _draw_number_tag(painter, text, right_x, center_y, font, s, QColor(255, 255, 255, 235), QColor("#111111"))
+        style = apex_tag_style(roles.get(index), colors, fill_alpha=235)
+        if style is None:
+            _draw_number_tag(painter, text, right_x, center_y, number_font, s)
         else:
-            _draw_number_tag(painter, text, right_x, center_y, font, s)
+            fill, ink, large = style
+            font = main_apex_font if large else number_font
+            _draw_number_tag(painter, text, right_x, center_y, font, s, fill, ink)
     _draw_curve_labels(painter, labels, img_w, img_h, s)
 
 
@@ -213,29 +195,28 @@ class _Panel:
         label, big, angle = _font(11 * s), _font(30 * s, bold=True), _font(15 * s, bold=True)
         small, small_bold, foot = _font(11 * s), _font(11 * s, bold=True), _font(9.5 * s)
 
-        pairs = engine.get_angle_pairs()
+        curves = engine.curve_summaries()
         apex_idx, deviation = engine.get_apex()
 
         # Each row is a list of segments: ("text", text, font, color) or
         # ("chip", color, font). None is a small gap.
         self.top = []
-        if pairs:
+        if curves:
             self.top.append([("text", "Cobb", label, TEXT_MUTED)])
             self.top.append([("text", "{:.1f}°".format(engine.get_selected_cobb_angle()), big, TEXT_MAIN)])
             self.top.append(None)
-            for i, (pair, curve_apex_idx) in enumerate(zip(pairs, engine.get_curve_apexes())):
+            for i, curve in enumerate(curves):
                 row = [
-                    ("chip", colors[i % len(colors)], angle),
-                    ("text", "{:.1f}°".format(pair.get("cobb_angle", 0.0)), angle, TEXT_MAIN),
-                    ("text", "  {}–{}".format(engine.get_level(pair["upper_detection_index"]),
-                                               engine.get_level(pair["lower_detection_index"])), small, TEXT_MUTED),
+                    ("chip", curve_color(colors, i), angle),
+                    ("text", "{:.1f}°".format(curve.angle), angle, TEXT_MAIN),
+                    ("text", "  {}–{}".format(curve.upper_level, curve.lower_level), small, TEXT_MUTED),
                 ]
-                if curve_apex_idx is not None:
+                if curve.apex_level is not None:
                     row.append(("text", "  apex ", small, TEXT_MUTED))
-                    if curve_apex_idx == apex_idx:
-                        row.append(("text", engine.get_level(curve_apex_idx), small_bold, TEXT_MAIN))
+                    if curve.is_main_apex:
+                        row.append(("text", curve.apex_level, small_bold, TEXT_MAIN))
                     else:
-                        row.append(("text", engine.get_level(curve_apex_idx), small, TEXT_MUTED))
+                        row.append(("text", curve.apex_level, small, TEXT_MUTED))
                 self.top.append(row)
         else:
             self.top.append([("text", "No curve above 10°", angle, TEXT_MAIN)])
@@ -244,11 +225,9 @@ class _Panel:
             self.top.append([("text", "Apex ", small, TEXT_MUTED),
                              ("text", engine.get_level(apex_idx), small_bold, TEXT_MAIN)])
             self.top.append([("text", "CSVL {:.0f} px".format(deviation), small, TEXT_MUTED)])
-        seconds = engine.get_processing_time()
-        if seconds is not None:
-            mode = engine.get_inference_mode()
-            text = "Processing {:.2f} s".format(seconds) + (" ({})".format(mode) if mode else "")
-            self.top.append([("text", text, small, TEXT_MUTED)])
+        processing = engine.processing_time_text()
+        if processing is not None:
+            self.top.append([("text", "Processing " + processing, small, TEXT_MUTED)])
         if edited:
             self.top.append([("text", "Edited by hand", small, TEXT_EDITED)])
 

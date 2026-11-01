@@ -1,5 +1,5 @@
 # The AI model: build it, load the weights and run it on one image. Used by
-# the server (server.py) and by the app's Local mode (modules/parser.py).
+# the server (server.py) and by the app's Local mode (modules/analysis.py).
 # Needs PyTorch, Detectron2, timm and OpenCV (requirements-server.txt).
 #
 # Steps for one image (run_inference):

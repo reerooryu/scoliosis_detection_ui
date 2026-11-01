@@ -3,8 +3,6 @@
 # file) creates and updates them from a ScoliosisModelEngine. The X-ray
 # itself is never modified.
 
-import math
-
 import shiboken6
 
 from PySide6.QtCore import QPointF, QPoint, QRectF, Signal, QObject, Qt
@@ -20,6 +18,7 @@ from config import (
     COLOR_KEYPOINT_CORNER, COLOR_CSVL_LINE, CURVE_COLORS,
     HANDLE_RADIUS, ACTIVE_HANDLE_RADIUS
 )
+from modules.drawing import apex_tag_style, curve_color, extended_line
 
 
 class OverlaySignals(QObject):
@@ -219,19 +218,6 @@ class LevelTagItem(QGraphicsItem):
         painter.drawText(self._rect, Qt.AlignCenter, self._text)
 
 
-def extended_line_points(p1, p2, extend_len=200):
-    """Returns (start, end) points for the p1->p2 line extended at both ends."""
-    dx = p2.x() - p1.x()
-    dy = p2.y() - p1.y()
-    length = math.sqrt(dx * dx + dy * dy)
-    if length == 0:
-        return None, None
-    ux, uy = dx / length, dy / length
-    start_p = QPointF(p1.x() - ux * extend_len, p1.y() - uy * extend_len)
-    end_p = QPointF(p2.x() + ux * (extend_len + 100), p2.y() + uy * (extend_len + 100))
-    return start_p, end_p
-
-
 class OverlayLayer:
     """Creates and updates the overlay items for one ImageCanvas from a
     ScoliosisModelEngine's data."""
@@ -288,8 +274,7 @@ class OverlayLayer:
             handle.setVisible(enabled)
 
     def curve_color(self, curve_index):
-        """Color of a curve. With more curves than colors, colors repeat."""
-        return self.curve_colors[curve_index % len(self.curve_colors)]
+        return curve_color(self.curve_colors, curve_index)
 
     def set_curve_colors(self, colors):
         """Apply new curve colors to the lines and labels already drawn, and
@@ -376,13 +361,7 @@ class OverlayLayer:
                 self.canvas.scene().addItem(tag)
                 self.level_tags.append(tag)
 
-        apex_colors = {
-            apex_idx: QColor(self.curve_color(curve_idx))
-            for curve_idx, apex_idx in enumerate(model_engine.get_curve_apexes())
-            if apex_idx is not None
-        }
-        main_apex, _ = model_engine.get_apex()
-
+        roles = model_engine.get_apex_roles()
         for index, (det, tag) in enumerate(zip(detections, self.level_tags)):
             kps = det.get("keypoints", [])
             if len(kps) < 5:
@@ -390,15 +369,12 @@ class OverlayLayer:
                 continue
             tag.setVisible(True)
             tag.setPos(min(kps[KP_TOP_LEFT][0], kps[KP_BOTTOM_LEFT][0]), kps[KP_CENTER][1])
-            text = model_engine.get_level(index)
-            if index in apex_colors:
-                fill = apex_colors[index]
-                ink = QColor("#111111") if fill.lightness() > 140 else QColor("white")
-                tag.set_style(text, fill, ink, large=index == main_apex)
-            elif index == main_apex:
-                tag.set_style(text, QColor(255, 255, 255, 235), QColor("#111111"), large=True)
+            style = apex_tag_style(roles.get(index), self.curve_colors)
+            if style is None:
+                tag.set_style(model_engine.get_level(index))
             else:
-                tag.set_style(text)
+                fill, ink, large = style
+                tag.set_style(model_engine.get_level(index), fill, ink, large)
 
     def _render_csvl(self, model_engine):
         csvl_x = model_engine.get_csvl_x()
@@ -533,8 +509,8 @@ class OverlayLayer:
             screen_pt = QPoint(int(x), int(y))
             txt_item.setPos(view.mapToScene(screen_pt))
 
-    def _set_extended_line(self, line_item, p1, p2):
-        start_p, end_p = extended_line_points(p1, p2, extend_len=250)
-        if start_p is None:
-            return
-        line_item.setLine(start_p.x(), start_p.y(), end_p.x(), end_p.y())
+    @staticmethod
+    def _set_extended_line(line_item, p1, p2):
+        line = extended_line(p1, p2, before=250, after=350)
+        if line is not None:
+            line_item.setLine(line[0].x(), line[0].y(), line[1].x(), line[1].y())

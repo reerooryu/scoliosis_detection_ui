@@ -12,8 +12,8 @@ import os
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtGui import QPixmap
 
-from modules.model_mock import ScoliosisModelEngine
-from modules.parser import InferenceWorker, validate_inference_payload
+from modules.analysis import InferenceWorker, validate_inference_payload
+from modules.engine import ScoliosisModelEngine
 from modules.project import write_project, read_project, ProjectLoadError
 from modules.image_io import ImageLoadError, encoded_image
 

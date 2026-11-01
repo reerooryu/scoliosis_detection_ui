@@ -25,18 +25,22 @@ class AnalysisSession(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.image_path = None
+        self._forget_image()
+        self._drag_moved = False    # True once the current drag has moved a landmark
+        self.state = self.STATE_EMPTY
+
+    def _forget_image(self, image_path=None):
+        """Reset everything about the loaded image."""
+        self.image_path = image_path
         # The source image is kept in memory so Save Project still works if
         # the original file is moved or deleted.
         self.image_bytes = None
         self.image_ext = None
         self.original_filename = None
         self.model_engine = None
-        self.dirty = False  # True once landmarks have been dragged since the last export
+        self.dirty = False          # True once landmarks have been dragged since the last export
         self.project_path = None    # path of the currently open .sdproj, if any
         self.project_dirty = False  # True once changed since the last Save Project
-        self._drag_moved = False    # True once the current drag has moved a landmark
-        self.state = self.STATE_EMPTY
 
     @property
     def has_result(self):
@@ -51,14 +55,7 @@ class AnalysisSession(QObject):
     # ------------------------------------------------------------------
 
     def start_loading(self, image_path):
-        self.image_path = image_path
-        self.image_bytes = None
-        self.image_ext = None
-        self.original_filename = None
-        self.model_engine = None
-        self.dirty = False
-        self.project_path = None
-        self.project_dirty = False
+        self._forget_image(image_path)
         self._set_state(self.STATE_LOADING)
 
     def set_result(self, model_engine, image_bytes=None, image_ext=None, original_filename=None):
@@ -88,14 +85,7 @@ class AnalysisSession(QObject):
         self._set_state(self.STATE_ERROR)
 
     def clear(self):
-        self.image_path = None
-        self.image_bytes = None
-        self.image_ext = None
-        self.original_filename = None
-        self.model_engine = None
-        self.dirty = False
-        self.project_path = None
-        self.project_dirty = False
+        self._forget_image()
         self._set_state(self.STATE_EMPTY)
         self.edit_state_changed.emit()
 
@@ -137,28 +127,20 @@ class AnalysisSession(QObject):
         self.edit_state_changed.emit()
 
     def undo(self):
-        if self.model_engine is None or not self.model_engine.undo():
-            return False
-        self.dirty = self.model_engine.has_edits()
-        self.project_dirty = True
-        self.metrics_changed.emit()
-        self.edit_state_changed.emit()
-        return True
+        return self._history_step(lambda engine: engine.undo())
 
     def redo(self):
-        if self.model_engine is None or not self.model_engine.redo():
-            return False
-        self.dirty = self.model_engine.has_edits()
-        self.project_dirty = True
-        self.metrics_changed.emit()
-        self.edit_state_changed.emit()
-        return True
+        return self._history_step(lambda engine: engine.redo())
 
     def reset_edits(self):
-        if self.model_engine is None or not self.model_engine.has_edits():
+        return self._history_step(lambda engine: engine.has_edits() and engine.reset_edits())
+
+    def _history_step(self, step):
+        """Run an undo / redo / reset-edits step on the engine. Returns False
+        if there was nothing to do."""
+        if self.model_engine is None or not step(self.model_engine):
             return False
-        self.model_engine.reset_edits()
-        self.dirty = False
+        self.dirty = self.model_engine.has_edits()
         self.project_dirty = True
         self.metrics_changed.emit()
         self.edit_state_changed.emit()

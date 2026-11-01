@@ -26,8 +26,9 @@ from modules.canvas import ImageCanvas
 from modules.overlay import OverlayLayer
 from modules.session import AnalysisSession
 from modules.controller import AnalysisController
-from modules.settings_dialog import MODE_LOCAL, SettingsDialog, choose_model_file
-from modules import parser, updater, updates
+from modules import analysis, settings, updater, updates
+from modules.settings import MODE_LOCAL
+from modules.settings_dialog import SettingsDialog, choose_model_file
 from modules.app_paths import LOG_PATH
 from modules.export import ExportDialog
 from modules.validation import ValidationDialog
@@ -35,16 +36,6 @@ from modules.project import PROJECT_EXTENSION
 from modules.image_io import ImageLoadError, load_image
 
 logger = logging.getLogger(__name__)
-
-
-def processing_time_text(engine):
-    """The Processing Time panel value, e.g. "1.62s (local)"; "-" if the
-    result has no time (older projects)."""
-    seconds = engine.get_processing_time()
-    if seconds is None:
-        return "-"
-    mode = engine.get_inference_mode()
-    return "{:.2f}s ({})".format(seconds, mode) if mode else "{:.2f}s".format(seconds)
 
 
 class MetricRow(QFrame):
@@ -127,15 +118,18 @@ class WorkspacePage(QWidget):
             panel_layout.addWidget(row)
 
         self.metrics["Apex"].set_tooltip(
-            "Vertebra with the largest horizontal deviation from the CSVL "
-            "(approximated -- see CSVL Deviation tooltip). Levels are counted "
-            "up from the lowest detected vertebra as L5."
+            "The vertebra furthest sideways from the CSVL. Levels are counted "
+            "up from the lowest vertebra found, as L5."
         )
         self.metrics["CSVL Deviation"].set_tooltip(
-            "CSVL (Central Sacral Vertical Line) reference is approximated as "
-            "the bottommost detected vertebra -- the backend JSON doesn't "
-            "label a sacrum. Deviation is in pixels: the JSON has no "
-            "pixel-spacing/calibration field to convert to mm."
+            "The CSVL (Central Sacral Vertical Line) is drawn through the "
+            "center of the lowest vertebra found, because the AI does not "
+            "mark the sacrum. The distance is in pixels: the image has no "
+            "pixel size, so it can't be converted to mm."
+        )
+        self.metrics["Processing Time"].set_tooltip(
+            "Local: the AI run on this computer, without the one-time model "
+            "load. Server: the full round trip to the server."
         )
 
         panel_layout.addStretch()
@@ -206,7 +200,7 @@ class MainWindow(QMainWindow):
         # widgets -- the menu bar and every dialog stay native OS style.
         theme.apply_clinical_theme(self.toolbar, self.stack, self.statusBar())
 
-        curve_colors = SettingsDialog.get_saved_curve_colors()
+        curve_colors = settings.curve_colors()
         self.overlay_layer = OverlayLayer(self.workspace_page.canvas, curve_colors=curve_colors)
         self.workspace_page.set_curve_colors(curve_colors)
         # Cobb labels are placed in screen pixels, so re-place them on zoom.
@@ -217,7 +211,7 @@ class MainWindow(QMainWindow):
         self.controller = AnalysisController(
             self.session,
             self.overlay_layer,
-            settings_provider=SettingsDialog.get_inference_settings,
+            settings_provider=settings.inference_settings,
             timeout=INFERENCE_TIMEOUT,
             parent=self,
         )
@@ -293,21 +287,13 @@ class MainWindow(QMainWindow):
         if self.controller.is_busy():
             self._waiting_update = info
             return
-        box = QMessageBox(self)
-        box.setWindowTitle("Update Ready")
-        box.setIcon(QMessageBox.Information)
-        box.setText(f"Scoliosis AI v{info.version} is ready to install.")
-        box.setInformativeText(
+        if self._ask_update(
+            "Update Ready", f"Scoliosis AI v{info.version} is ready to install.",
             f"You have v{APP_VERSION}.\n\n"
             "Update Now: the app closes and opens again in a few seconds.\n"
-            "Later: the update installs by itself the next time you open the app."
-        )
-        if info.notes:
-            box.setDetailedText(info.notes)
-        now_btn = box.addButton("Update Now", QMessageBox.AcceptRole)
-        box.addButton("Later", QMessageBox.RejectRole)
-        box.exec()
-        if box.clickedButton() is now_btn:
+            "Later: the update installs by itself the next time you open the app.",
+            info.notes, "Update Now",
+        ):
             self.restart_for_update = True
             self.close()                 # asks about unsaved work first
             if self.isVisible():         # the user chose to keep working
@@ -320,9 +306,9 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(1500, lambda: self._on_update_ready(info))
 
     def _on_about(self):
-        settings = SettingsDialog.get_inference_settings()
-        where = ("this computer — " + (settings.weights_path or "no model file chosen")
-                 if settings.mode == MODE_LOCAL else "server — " + settings.api_url)
+        current = settings.inference_settings()
+        where = ("this computer — " + (current.weights_path or "no model file chosen")
+                 if current.mode == MODE_LOCAL else "server — " + current.api_url)
         QMessageBox.about(
             self, "About",
             f"{APP_NAME}\nVersion {APP_VERSION}\n\nAI model runs on: {where}\n\n"
@@ -331,29 +317,37 @@ class MainWindow(QMainWindow):
         )
 
     def _on_update_available(self, info):
-        box = QMessageBox(self)
-        box.setWindowTitle("Update Available")
-        box.setIcon(QMessageBox.Information)
-        box.setText(
-            f"A new version of the app is available: {info.version} "
-            f"(you have {APP_VERSION}).\n\n"
+        """Fallback when the app can't update itself: offer the download page."""
+        if self._ask_update(
+            "Update Available",
+            f"A new version of the app is available: {info.version} (you have {APP_VERSION}).",
             "Open the download page? Download the zip for your computer and "
             "replace the old app folder with the new one. Your settings and "
-            "model file are kept."
-        )
-        if info.notes:
-            box.setDetailedText(info.notes)
-        open_btn = box.addButton("Open Download Page", QMessageBox.AcceptRole)
+            "model file are kept.",
+            info.notes, "Open Download Page",
+        ):
+            QDesktopServices.openUrl(QUrl(info.url))
+
+    def _ask_update(self, title, text, details, notes, accept_label):
+        """An update question with accept_label / "Later". The release notes
+        are under "Show Details". Returns True if accepted."""
+        box = QMessageBox(self)
+        box.setWindowTitle(title)
+        box.setIcon(QMessageBox.Information)
+        box.setText(text)
+        box.setInformativeText(details)
+        if notes:
+            box.setDetailedText(notes)
+        accept_btn = box.addButton(accept_label, QMessageBox.AcceptRole)
         box.addButton("Later", QMessageBox.RejectRole)
         box.exec()
-        if box.clickedButton() is open_btn:
-            QDesktopServices.openUrl(QUrl(info.url))
+        return box.clickedButton() is accept_btn
 
     def _ensure_model_file(self):
         """Local mode needs a model file. If none is saved or found next to
         the app, ask for it once now rather than failing on the first image."""
-        settings = SettingsDialog.get_inference_settings()
-        if settings.mode != MODE_LOCAL or settings.weights_path:
+        current = settings.inference_settings()
+        if current.mode != MODE_LOCAL or current.weights_path:
             return
         QMessageBox.information(
             self, "Choose the AI Model File",
@@ -364,7 +358,7 @@ class MainWindow(QMainWindow):
         )
         path = choose_model_file(self)
         if path:
-            SettingsDialog.save_weights_path(path)
+            settings.save_weights_path(path)
         else:
             self.statusBar().showMessage(
                 "No AI model file chosen — choose it in Settings before analysing an image."
@@ -374,147 +368,90 @@ class MainWindow(QMainWindow):
         """Load the local model in the background, so the first analysis
         does not wait for it. A failure is only logged here; it is shown if
         the user then analyses an image."""
-        settings = SettingsDialog.get_inference_settings()
-        if settings.mode != MODE_LOCAL or not settings.weights_path:
+        current = settings.inference_settings()
+        weights_path = current.weights_path
+        if current.mode != MODE_LOCAL or not weights_path:
             return
-        if parser.is_local_model_loaded(settings.weights_path):
+        if analysis.is_local_model_loaded(weights_path):
             return
 
         def load():
             try:
-                parser.load_local_model(settings.weights_path)
+                analysis.load_local_model(weights_path)
             except Exception as exc:
                 logger.warning("Preloading the AI model failed: %s", exc)
 
         threading.Thread(target=load, name="preload-model", daemon=True).start()
 
+    def _action(self, text, slot, shortcut=None, enabled=True, checkable=False, tooltip=None):
+        """A menu/toolbar action. shortcut is a QKeySequence standard key or
+        text such as "Ctrl+E"."""
+        action = QAction(text, self)
+        if shortcut is not None:
+            action.setShortcut(QKeySequence(shortcut))
+        action.setEnabled(enabled)
+        action.setCheckable(checkable)
+        if tooltip:
+            action.setToolTip(tooltip)
+        (action.toggled if checkable else action.triggered).connect(slot)
+        return action
+
     def _build_menu_and_toolbar(self):
-        menu_bar = self.menuBar()
+        # Settings is in the File menu and the toolbar.
+        self.settings_action = self._action("&Settings...", self._on_open_settings, "Ctrl+,")
 
-        # Settings action is shared between the File menu and the toolbar,
-        # so it's built once, up front.
-        self.settings_action = QAction("&Settings...", self)
-        self.settings_action.setShortcut(QKeySequence("Ctrl+,"))
-        self.settings_action.triggered.connect(self._on_open_settings)
+        # A saved project can be reopened and edited later; Export is a one-way output.
+        self.open_project_action = self._action("Open &Project...", self._on_open_project, "Ctrl+Shift+O")
+        self.save_project_action = self._action(
+            "&Save Project", self._on_save_project, "Ctrl+Shift+S", enabled=False)
+        self.save_project_as_action = self._action(
+            "Save Project &As...", self._on_save_project_as, enabled=False)
+        self.export_action = self._action(
+            "&Export Results...", self._on_export_clicked, QKeySequence.Save, enabled=False)
+        self._add_menu("&File", [
+            self._action("&Open Image...", self._on_open_image, QKeySequence.Open),
+            self.open_project_action, None,
+            self.save_project_action, self.save_project_as_action, None,
+            self.export_action, None,
+            self.settings_action, None,
+            self._action("E&xit", self.close, "Ctrl+Q"),
+        ])
 
-        # --- File menu ---
-        file_menu = menu_bar.addMenu("&File")
-        open_action = QAction("&Open Image...", self)
-        open_action.setShortcut(QKeySequence.Open)  # Ctrl+O
-        open_action.triggered.connect(self._on_open_image)
-        file_menu.addAction(open_action)
+        self.undo_action = self._action("&Undo", self._on_undo, QKeySequence.Undo, enabled=False)
+        self.redo_action = self._action("&Redo", self._on_redo, "Ctrl+Shift+Z", enabled=False)
+        self.reset_edits_action = self._action(
+            "Reset &Edits", self._on_reset_edits, "Ctrl+Shift+R", enabled=False,
+            tooltip="Discard manual landmark adjustments and restore the AI's original result")
+        self.reset_action = self._action(
+            "Full &Reset...", self._on_reset, "Ctrl+R",
+            tooltip="Clear the loaded image and analysis, and return to the start")
+        self._add_menu("&Edit", [
+            self.undo_action, self.redo_action, None, self.reset_edits_action, None, self.reset_action,
+        ])
 
-        self.open_project_action = QAction("Open &Project...", self)
-        self.open_project_action.setShortcut(QKeySequence("Ctrl+Shift+O"))
-        self.open_project_action.triggered.connect(self._on_open_project)
-        file_menu.addAction(self.open_project_action)
+        # Zoom/fit only make sense once an image is on the canvas.
+        self.zoom_in_action = self._action(
+            "Zoom &In", lambda: self.workspace_page.canvas.zoom_in(), QKeySequence.ZoomIn, enabled=False)
+        self.zoom_out_action = self._action(
+            "Zoom &Out", lambda: self.workspace_page.canvas.zoom_out(), QKeySequence.ZoomOut, enabled=False)
+        self.fit_action = self._action(
+            "&Fit to View", lambda: self.workspace_page.canvas.fit_in_view(), "Ctrl+0", enabled=False)
+        self.edit_mode_action = self._action(
+            "&Edit Mode", self._on_edit_mode_toggled, "Ctrl+E", enabled=False, checkable=True,
+            tooltip="Available once landmarks are loaded")
+        self.retry_action = self._action(
+            "&Retry AI Analysis", self._on_retry_analysis, "F5", enabled=False)
+        self._add_menu("&View", [
+            self.zoom_in_action, self.zoom_out_action, self.fit_action,
+            self.edit_mode_action, self.retry_action,
+        ])
 
-        file_menu.addSeparator()
+        # ML-team QA workflow, unrelated to the clinical state.
+        self._add_menu("&Tools", [self._action("&Model Validation...", self._on_open_validation)])
 
-        # A saved project can be reopened and edited later; Export (below)
-        # is a one-way output.
-        self.save_project_action = QAction("&Save Project", self)
-        self.save_project_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
-        self.save_project_action.setEnabled(False)
-        self.save_project_action.triggered.connect(self._on_save_project)
-        file_menu.addAction(self.save_project_action)
-
-        self.save_project_as_action = QAction("Save Project &As...", self)
-        self.save_project_as_action.setEnabled(False)
-        self.save_project_as_action.triggered.connect(self._on_save_project_as)
-        file_menu.addAction(self.save_project_as_action)
-
-        file_menu.addSeparator()
-
-        self.export_action = QAction("&Export Results...", self)
-        self.export_action.setShortcut(QKeySequence.Save)  # Ctrl+S
-        self.export_action.setEnabled(False)
-        self.export_action.triggered.connect(self._on_export_clicked)
-        file_menu.addAction(self.export_action)
-
-        file_menu.addSeparator()
-        file_menu.addAction(self.settings_action)
-        file_menu.addSeparator()
-
-        exit_action = QAction("E&xit", self)
-        exit_action.setShortcut(QKeySequence("Ctrl+Q"))
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
-
-        # --- Edit menu ---
-        edit_menu = menu_bar.addMenu("&Edit")
-
-        self.undo_action = QAction("&Undo", self)
-        self.undo_action.setShortcut(QKeySequence.Undo)  # Ctrl+Z
-        self.undo_action.setEnabled(False)
-        self.undo_action.triggered.connect(self._on_undo)
-        edit_menu.addAction(self.undo_action)
-
-        self.redo_action = QAction("&Redo", self)
-        self.redo_action.setShortcut(QKeySequence("Ctrl+Shift+Z"))
-        self.redo_action.setEnabled(False)
-        self.redo_action.triggered.connect(self._on_redo)
-        edit_menu.addAction(self.redo_action)
-
-        edit_menu.addSeparator()
-
-        self.reset_edits_action = QAction("Reset &Edits", self)
-        self.reset_edits_action.setShortcut(QKeySequence("Ctrl+Shift+R"))
-        self.reset_edits_action.setEnabled(False)
-        self.reset_edits_action.setToolTip(
-            "Discard manual landmark adjustments and restore the AI's original result"
-        )
-        self.reset_edits_action.triggered.connect(self._on_reset_edits)
-        edit_menu.addAction(self.reset_edits_action)
-
-        edit_menu.addSeparator()
-
-        self.reset_action = QAction("Full &Reset...", self)
-        self.reset_action.setShortcut(QKeySequence("Ctrl+R"))
-        self.reset_action.setToolTip("Clear the loaded image and analysis, and return to the start")
-        self.reset_action.triggered.connect(self._on_reset)
-        edit_menu.addAction(self.reset_action)
-
-        # --- View menu ---
-        view_menu = menu_bar.addMenu("&View")
-        self.zoom_in_action = QAction("Zoom &In", self)
-        self.zoom_in_action.setShortcut(QKeySequence.ZoomIn)  # Ctrl++
-        self.zoom_in_action.triggered.connect(lambda: self.workspace_page.canvas.zoom_in())
-        self.zoom_out_action = QAction("Zoom &Out", self)
-        self.zoom_out_action.setShortcut(QKeySequence.ZoomOut)  # Ctrl+-
-        self.zoom_out_action.triggered.connect(lambda: self.workspace_page.canvas.zoom_out())
-        self.fit_action = QAction("&Fit to View", self)
-        self.fit_action.setShortcut(QKeySequence("Ctrl+0"))
-        self.fit_action.triggered.connect(lambda: self.workspace_page.canvas.fit_in_view())
-
-        self.edit_mode_action = QAction("&Edit Mode", self)
-        self.edit_mode_action.setShortcut(QKeySequence("Ctrl+E"))
-        self.edit_mode_action.setCheckable(True)
-        self.edit_mode_action.setEnabled(False)
-        self.edit_mode_action.setToolTip("Available once landmarks are loaded")
-        self.edit_mode_action.toggled.connect(self._on_edit_mode_toggled)
-
-        self.retry_action = QAction("&Retry AI Analysis", self)
-        self.retry_action.setShortcut(QKeySequence("F5"))
-        self.retry_action.setEnabled(False)
-        self.retry_action.triggered.connect(self._on_retry_analysis)
-
-        for action in (self.zoom_in_action, self.zoom_out_action, self.fit_action,
-                       self.edit_mode_action, self.retry_action):
-            view_menu.addAction(action)
-
-        # --- Tools menu (ML-team QA workflow, unrelated to the clinical state) ---
-        tools_menu = menu_bar.addMenu("&Tools")
-        self.validation_action = QAction("&Model Validation...", self)
-        self.validation_action.triggered.connect(self._on_open_validation)
-        tools_menu.addAction(self.validation_action)
-
-        # --- Help menu ---
-        help_menu = menu_bar.addMenu("&Help")
-        about_action = QAction("&About", self)
+        about_action = self._action("&About", self._on_about)
         about_action.setMenuRole(QAction.AboutRole)  # goes in the app menu on a Mac
-        about_action.triggered.connect(self._on_about)
-        help_menu.addAction(about_action)
+        self._add_menu("&Help", [about_action])
 
         # --- Toolbar: zoom / edit / undo-redo / reset-edits / settings, far right ---
         self.toolbar = QToolBar("Main Toolbar", self)
@@ -527,21 +464,22 @@ class MainWindow(QMainWindow):
         spacer.setStyleSheet("background: transparent;")
         self.toolbar.addWidget(spacer)
 
-        self.toolbar.addAction(self.zoom_out_action)
-        self.toolbar.addAction(self.zoom_in_action)
-        self.toolbar.addAction(self.fit_action)
-        self.toolbar.addSeparator()
-        self.toolbar.addAction(self.edit_mode_action)
-        self.toolbar.addAction(self.undo_action)
-        self.toolbar.addAction(self.redo_action)
-        self.toolbar.addAction(self.reset_edits_action)
-        self.toolbar.addSeparator()
+        for action in (self.zoom_out_action, self.zoom_in_action, self.fit_action, None,
+                       self.edit_mode_action, self.undo_action, self.redo_action,
+                       self.reset_edits_action, None, self.settings_action):
+            if action is None:
+                self.toolbar.addSeparator()
+            else:
+                self.toolbar.addAction(action)
 
-        self.toolbar.addAction(self.settings_action)
-
-        # Zoom/fit only make sense once an image is on the canvas.
-        for action in (self.zoom_in_action, self.zoom_out_action, self.fit_action):
-            action.setEnabled(False)
+    def _add_menu(self, title, actions):
+        """A menu bar menu with these actions; None is a separator."""
+        menu = self.menuBar().addMenu(title)
+        for action in actions:
+            if action is None:
+                menu.addSeparator()
+            else:
+                menu.addAction(action)
 
     # ------------------------------------------------------------------
     # Load / Submit
@@ -625,7 +563,7 @@ class MainWindow(QMainWindow):
             metrics["Primary Cobb Angle"].set_value("No curve above 10°")
 
         apex_idx, deviation_px = engine.get_apex()
-        self.workspace_page.show_curves(self._curve_texts(engine, pairs, apex_idx))
+        self.workspace_page.show_curves([self._curve_text(curve) for curve in engine.curve_summaries()])
         if apex_idx is not None:
             metrics["Apex"].set_value(engine.get_level(apex_idx))
             metrics["CSVL Deviation"].set_value("{:.1f} px".format(deviation_px))
@@ -637,26 +575,26 @@ class MainWindow(QMainWindow):
         self._update_window_title()
 
     @staticmethod
-    def _curve_texts(engine, pairs, main_apex):
-        """One panel line per curve: angle, then its levels and apex in small
-        text. The whole-spine apex is in bold, as in the exported JPG."""
-        texts = []
-        for pair, curve_apex in zip(pairs, engine.get_curve_apexes()):
-            details = "{}–{}".format(engine.get_level(pair["upper_detection_index"]),
-                                     engine.get_level(pair["lower_detection_index"]))
-            if curve_apex is not None:
-                apex = engine.get_level(curve_apex)
-                if curve_apex == main_apex:
-                    apex = "<b style='color:{};'>{}</b>".format(theme.TEXT_PRIMARY, apex)
-                details += " · apex " + apex
-            texts.append("{:.1f}°&nbsp;&nbsp;<span style='font-size:10pt; font-weight:400; color:{};'>{}</span>".format(
-                pair["cobb_angle"], theme.TEXT_MUTED, details))
-        return texts
+    def _curve_text(curve):
+        """One panel line for a CurveSummary: the angle, then its levels and
+        apex in small text. The whole-spine apex is in bold, as in the JPG."""
+        details = "{}–{}".format(curve.upper_level, curve.lower_level)
+        if curve.apex_level is not None:
+            apex = curve.apex_level
+            if curve.is_main_apex:
+                apex = "<b style='color:{};'>{}</b>".format(theme.TEXT_PRIMARY, apex)
+            details += " · apex " + apex
+        return "{:.1f}°&nbsp;&nbsp;<span style='font-size:10pt; font-weight:400; color:{};'>{}</span>".format(
+            curve.angle, theme.TEXT_MUTED, details)
+
+    def _show_processing_time(self):
+        """The time saved with the result ("-" for older projects)."""
+        text = self.session.model_engine.processing_time_text()
+        self.workspace_page.metrics["Processing Time"].set_value(text or "-")
 
     def _on_analysis_completed(self, elapsed):
-        engine = self.session.model_engine
-        if engine is not None:
-            self.workspace_page.metrics["Processing Time"].set_value(processing_time_text(engine))
+        if self.session.model_engine is not None:
+            self._show_processing_time()
 
     def _on_edit_state_changed(self):
         self.undo_action.setEnabled(self.session.can_undo())
@@ -730,7 +668,7 @@ class MainWindow(QMainWindow):
 
     def _apply_curve_colors(self):
         """Use the saved curve colors on the image and in the panel."""
-        colors = SettingsDialog.get_saved_curve_colors()
+        colors = settings.curve_colors()
         self.overlay_layer.set_curve_colors(colors)
         self.workspace_page.set_curve_colors(colors)
 
@@ -773,10 +711,7 @@ class MainWindow(QMainWindow):
     def _open_project_path(self, path):
         if self.controller.open_project(path):
             self.stack.setCurrentWidget(self.workspace_page)
-            # Show the time saved with the project ("-" for older projects).
-            self.workspace_page.metrics["Processing Time"].set_value(
-                processing_time_text(self.session.model_engine)
-            )
+            self._show_processing_time()
             # Draw the overlay once the page is visible and laid out; label
             # placement needs the final viewport size.
             QTimer.singleShot(150, self.controller.finish_open_project)
