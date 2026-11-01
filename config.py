@@ -4,7 +4,7 @@
 APP_NAME = "Scoliosis Detection & Measurement UI"
 # Version of this app. A release on GitHub is tagged "v" + APP_VERSION; the
 # app tells the user when GitHub has a newer one (modules/updates.py).
-APP_VERSION = "0.1.1"
+APP_VERSION = "0.1.2"
 GITHUB_REPO = "reerooryu/scoliosis_detection_ui"
 WINDOW_WIDTH = 1440
 WINDOW_HEIGHT = 900
