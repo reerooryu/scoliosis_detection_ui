@@ -7,7 +7,7 @@
 import json
 import os
 
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFileDialog, QMessageBox, QTextEdit
@@ -66,7 +66,9 @@ class ValidationDialog(QDialog):
 
         self.results_txt = QTextEdit()
         self.results_txt.setReadOnly(True)
-        self.results_txt.setFont(QFont("Consolas", 11))
+        # The system's fixed-width font (Consolas on Windows, Menlo on a Mac),
+        # so the report's columns line up.
+        self.results_txt.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
         layout.addWidget(self.results_txt, stretch=1)
 
         close_btn = QPushButton("Close")
@@ -149,14 +151,14 @@ class ValidationDialog(QDialog):
         lines.append(f"    Mean Cobb angle error: {cobb_val_cmp['mean_error']:.2f} deg")
         lines.append(f"    Max  Cobb angle error: {cobb_val_cmp['max_error']:.2f} deg")
         lines.append("")
-        lines.append("    2.2 CSVL is shown in the clinical workspace panel, not compared")
-        lines.append("        here -- the label schema captured so far has no CSVL/apex field.")
+        lines.append("    2.2 CSVL and apex are not compared: the label files have no")
+        lines.append("        CSVL or apex field.")
         lines.append("")
         lines.append("=" * 64)
         lines.append("3. ANALYSIS TIME")
         lines.append("=" * 64)
-        lines.append("Reported per-run in the clinical workspace status bar. Since speed is")
-        lines.append("device-dependent, always note the hardware alongside any timing figure")
-        lines.append("you report to others.")
+        lines.append("Shown as Processing Time in the measurement panel, and saved in the")
+        lines.append("exported JSON. It depends on the computer, so note the computer")
+        lines.append("with any time you report.")
 
         return "\n".join(lines)

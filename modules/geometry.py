@@ -267,9 +267,9 @@ def compare_detection_counts(pred_detections, label_detections):
     if diff == 0:
         verdict = "Match"
     elif diff < 0:
-        verdict = f"{abs(diff)} missing vs. label (possible underfit / weak architecture)"
+        verdict = f"{abs(diff)} fewer than the label (vertebrae missed)"
     else:
-        verdict = f"{diff} extra vs. label (possible overfit / duplicated features)"
+        verdict = f"{diff} more than the label (extra or doubled vertebrae)"
     return {"predicted": pred_n, "label": label_n, "diff": diff, "verdict": verdict}
 
 
@@ -306,9 +306,9 @@ def compare_cobb_angle_counts(pred_pairs, label_pairs):
     if diff == 0:
         verdict = "Match"
     elif diff < 0:
-        verdict = f"{abs(diff)} fewer curve(s) than label (model may be missing a curve)"
+        verdict = f"{abs(diff)} fewer curve(s) than the label (a curve was missed)"
     else:
-        verdict = f"{diff} more curve(s) than label (possible overfitting)"
+        verdict = f"{diff} more curve(s) than the label (an extra curve was found)"
     return {"predicted": pred_n, "label": label_n, "diff": diff, "verdict": verdict}
 
 
