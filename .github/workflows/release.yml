@@ -33,7 +33,7 @@ jobs:
         include:
           - os: windows-latest
             zip: ScoliosisAI-Windows.zip
-          - os: macos-14          # Apple Silicon
+          - os: macos-15          # Apple Silicon (macos-14 was retired in Nov 2026)
             zip: ScoliosisAI-Mac.zip
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
