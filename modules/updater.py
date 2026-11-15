@@ -258,6 +258,9 @@ def apply_pending_update(install, current=APP_VERSION, pid=None, launch=True):
         cleanup(install, current, keep_partial=False)
         return False
 
+    if attempts:
+        logger.warning("The last try to install update %s failed (Windows: see %s); trying again",
+                       ready["version"], LOG_PATH.with_name("update-log.txt"))
     ready["attempts"] = attempts + 1
     _write_ready(install.staging_dir, ready)
     logger.info("Installing update %s", ready["version"])
@@ -319,6 +322,9 @@ param(
     [string]$LogPath
 )
 if ($LogPath) { try { Start-Transcript -LiteralPath $LogPath -Force | Out-Null } catch { } }
+# Windows can't rename a folder that is any program's working folder, so
+# never work from inside the app folder.
+Set-Location -LiteralPath (Split-Path -Parent $Target)
 $old = "$Target.old"
 $oldName = Split-Path -Leaf $old
 $targetName = Split-Path -Leaf $Target
@@ -375,8 +381,12 @@ def _start_windows_swap(install, staged, pid, shell="powershell.exe"):
     if sys.platform == "win32":
         # No console window, and not closed together with this app.
         flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+    # The helper must not start inside the app folder. Started from Explorer
+    # or a shortcut, the app's own working folder IS the app folder, and
+    # Windows refuses to rename a folder that is any program's working
+    # folder: the swap failed every time (versions 0.1.0 to 0.1.2).
     return subprocess.Popen(
-        command, creationflags=flags, close_fds=True,
+        command, cwd=str(install.app_path.parent), creationflags=flags, close_fds=True,
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
 

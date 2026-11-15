@@ -278,10 +278,21 @@ def test_failed_update_is_dropped_after_two_tries(tmp_path, downloads, monkeypat
     assert (install.app_path / "old.txt").exists()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell swap")
-def test_windows_swap_script(tmp_path):
-    # A real swap with Windows PowerShell. The "app" is a copy of whoami.exe,
-    # so starting it afterwards just prints a name and exits.
+def test_windows_helper_starts_outside_the_app_folder(tmp_path, monkeypatch):
+    # Windows can't rename a folder that is a program's working folder, so
+    # the helper must not inherit the app's (which is the app folder when
+    # it is started from Explorer or a shortcut).
+    install = make_install(tmp_path, "win32")
+    install.staging_dir.mkdir()
+    started = {}
+    monkeypatch.setattr(updater.subprocess, "Popen", lambda command, **kwargs: started.update(kwargs))
+    updater._start_windows_swap(install, install.staging_dir / "x", 1)
+    assert Path(started["cwd"]) == install.app_path.parent
+
+
+def windows_test_app(tmp_path):
+    """A made-up installed app and a staged new version. The "program" is a
+    copy of whoami.exe, so starting it just prints a name and exits."""
     whoami = Path(os.environ["SystemRoot"]) / "System32" / "whoami.exe"
     folder = tmp_path / "Scoliosis AI"
     folder.mkdir()
@@ -290,6 +301,39 @@ def test_windows_swap_script(tmp_path):
     install = updater.Install("win32", app, app / "ScoliosisAI.exe", folder / updater.STAGING_NAME)
     staged = make_app(install.staging_dir / "0.2.0", "win32", "new.txt")
     shutil.copy(whoami, staged / "ScoliosisAI.exe")
+    return install, staged
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell swap")
+def test_windows_swap_when_app_runs_from_its_own_folder(tmp_path):
+    # As in real use: the "old app" is a separate process whose working
+    # folder is the app folder. It starts the helper and exits, and the
+    # helper must still manage to swap the folders.
+    install, staged = windows_test_app(tmp_path)
+    old_app = (
+        "import os, sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
+        "from modules import updater; "
+        "app = Path(sys.argv[2]); "
+        "install = updater.Install('win32', app, app / 'ScoliosisAI.exe', Path(sys.argv[3])); "
+        "updater._start_windows_swap(install, Path(sys.argv[4]), os.getpid())"
+    )
+    repo = Path(updater.__file__).resolve().parent.parent
+    subprocess.run(
+        [sys.executable, "-c", old_app, str(repo), str(install.app_path), str(install.staging_dir), str(staged)],
+        cwd=install.app_path, check=True, timeout=60,
+    )
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline and not (install.app_path / "new.txt").exists():
+        time.sleep(0.5)
+    assert (install.app_path / "new.txt").exists()
+    assert not (install.app_path / "old.txt").exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell swap")
+def test_windows_swap_script(tmp_path):
+    # A real swap with Windows PowerShell.
+    install, staged = windows_test_app(tmp_path)
+    app = install.app_path
 
     # The "old app" is a short-lived process the script must wait for.
     old_app = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(2)"])
